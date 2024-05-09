@@ -52,7 +52,7 @@ impl Camera {
             //     Point3::new(0f32, 0f32, 0f32),
             //     vec3(0f32, 0f32, 1f32),
             // ),
-            projection: perspective(Deg(100.0), 16. / 9., 0.1, 1000.0),
+            projection: perspective(Deg(100.0), 16. / 9., 0.01, 1000.0),
             uniform_buffer: 0,
             last_mouse: (-55.5f64, 55.5f64),
             front: Vector3::new(0f32, 0f32, 1f32),
