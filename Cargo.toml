@@ -1,0 +1,12 @@
+[package]
+name = "rust-gl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cgmath = "0.18.0"
+gl = "0.14.0"
+glfw = "0.55.0"
+imgui = "0.12.0"
+obj-rs = "0.7.1"
+rust = "0.0.1"

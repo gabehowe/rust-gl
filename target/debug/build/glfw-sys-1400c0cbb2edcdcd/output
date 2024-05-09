@@ -1,0 +1,76 @@
+CMAKE_TOOLCHAIN_FILE_x86_64-unknown-linux-gnu = None
+CMAKE_TOOLCHAIN_FILE_x86_64_unknown_linux_gnu = None
+HOST_CMAKE_TOOLCHAIN_FILE = None
+CMAKE_TOOLCHAIN_FILE = None
+CMAKE_GENERATOR_x86_64-unknown-linux-gnu = None
+CMAKE_GENERATOR_x86_64_unknown_linux_gnu = None
+HOST_CMAKE_GENERATOR = None
+CMAKE_GENERATOR = None
+CMAKE_PREFIX_PATH_x86_64-unknown-linux-gnu = None
+CMAKE_PREFIX_PATH_x86_64_unknown_linux_gnu = None
+HOST_CMAKE_PREFIX_PATH = None
+CMAKE_PREFIX_PATH = None
+CMAKE_x86_64-unknown-linux-gnu = None
+CMAKE_x86_64_unknown_linux_gnu = None
+HOST_CMAKE = None
+CMAKE = None
+running: cd "/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/build" && CMAKE_PREFIX_PATH="" "cmake" "/home/gabri/.cargo/registry/src/index.crates.io-6f17d22bba15001f/glfw-sys-5.0.0+3.3.9/glfw" "-DGLFW_BUILD_EXAMPLES=OFF" "-DGLFW_BUILD_TESTS=OFF" "-DGLFW_BUILD_DOCS=OFF" "-DCMAKE_INSTALL_LIBDIR=lib" "-DGLFW_USE_WAYLAND=OFF" "-DCMAKE_INSTALL_PREFIX=/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out" "-DCMAKE_C_FLAGS= -ffunction-sections -fdata-sections -fPIC -m64" "-DCMAKE_C_COMPILER=/usr/bin/cc" "-DCMAKE_CXX_FLAGS= -ffunction-sections -fdata-sections -fPIC -m64" "-DCMAKE_CXX_COMPILER=/usr/bin/c++" "-DCMAKE_ASM_FLAGS= -ffunction-sections -fdata-sections -fPIC -m64" "-DCMAKE_ASM_COMPILER=/usr/bin/cc" "-DCMAKE_BUILD_TYPE=Debug"
+-- The C compiler identification is GNU 13.2.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Using X11 for window creation
+-- Found X11: /usr/include   
+-- Looking for XOpenDisplay in /usr/lib/x86_64-linux-gnu/libX11.so;/usr/lib/x86_64-linux-gnu/libXext.so
+-- Looking for XOpenDisplay in /usr/lib/x86_64-linux-gnu/libX11.so;/usr/lib/x86_64-linux-gnu/libXext.so - found
+-- Looking for gethostbyname
+-- Looking for gethostbyname - found
+-- Looking for connect
+-- Looking for connect - found
+-- Looking for remove
+-- Looking for remove - found
+-- Looking for shmat
+-- Looking for shmat - found
+-- Looking for IceConnectionNumber in ICE
+-- Looking for IceConnectionNumber in ICE - found
+-- Configuring done (0.5s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/build
+running: cd "/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/build" && MAKEFLAGS="-j --jobserver-fds=8,10 --jobserver-auth=8,10" "cmake" "--build" "." "--target" "install" "--config" "Debug"
+[  5%] Building C object src/CMakeFiles/glfw.dir/posix_time.c.o
+[ 11%] Building C object src/CMakeFiles/glfw.dir/window.c.o
+[ 17%] Building C object src/CMakeFiles/glfw.dir/x11_init.c.o
+[ 23%] Building C object src/CMakeFiles/glfw.dir/context.c.o
+[ 35%] Building C object src/CMakeFiles/glfw.dir/x11_monitor.c.o
+[ 35%] Building C object src/CMakeFiles/glfw.dir/init.c.o
+[ 41%] Building C object src/CMakeFiles/glfw.dir/vulkan.c.o
+[ 52%] Building C object src/CMakeFiles/glfw.dir/input.c.o
+[ 52%] Building C object src/CMakeFiles/glfw.dir/monitor.c.o
+[ 70%] Building C object src/CMakeFiles/glfw.dir/egl_context.c.o
+[ 70%] Building C object src/CMakeFiles/glfw.dir/glx_context.c.o
+[ 70%] Building C object src/CMakeFiles/glfw.dir/linux_joystick.c.o
+[ 76%] Building C object src/CMakeFiles/glfw.dir/x11_window.c.o
+[ 88%] Building C object src/CMakeFiles/glfw.dir/posix_thread.c.o
+[ 88%] Building C object src/CMakeFiles/glfw.dir/xkb_unicode.c.o
+[ 94%] Building C object src/CMakeFiles/glfw.dir/osmesa_context.c.o
+[100%] Linking C static library libglfw3.a
+[100%] Built target glfw
+Install the project...
+-- Install configuration: "Debug"
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/lib/libglfw3.a
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/include/GLFW
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/include/GLFW/glfw3.h
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/include/GLFW/glfw3native.h
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/lib/cmake/glfw3/glfw3Config.cmake
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/lib/cmake/glfw3/glfw3ConfigVersion.cmake
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/lib/cmake/glfw3/glfw3Targets.cmake
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/lib/cmake/glfw3/glfw3Targets-debug.cmake
+-- Installing: /home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/lib/pkgconfig/glfw3.pc
+cargo:root=/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out
+cargo:rustc-link-search=native=/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-1400c0cbb2edcdcd/out/lib
+cargo:rustc-link-lib=dylib=glfw3
