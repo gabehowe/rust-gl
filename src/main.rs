@@ -13,20 +13,21 @@ fn main() {
     // let grid_size = 3;
     // for i in -grid_size..grid_size + 1 {
     //     for j in -grid_size..grid_size + 1 {
-    //         let size = 20.;
-    //
-    //         let vertices_per_unit = 0.1;
-    //         let converted_size: f32 = size / vertices_per_unit;
-    //         println!("{:?}", converted_size.round() as u32);
-    //         let grid_verts = create_grid(converted_size.round() as u32, converted_size.round() as u32, vertices_per_unit, Vector2::new(-size / 2. + (i as f32) * size, -size / 2. + (j as f32) * size) - vertices_per_unit);
-    //
-    //         let mut grid = Renderable::new(grid_verts.0, grid_verts.1, grid_verts.2, unsafe { engine::renderable::Shader::load_from_path("shaders/noise_shader") });
-    //         engine.add_renderable(grid);
+            let size = 20.;
+
+            let vertices_per_unit = 0.1;
+            let converted_size: f32 = size / vertices_per_unit;
+            println!("{:?}", converted_size.round() as u32);
+            let grid_verts = create_grid(converted_size.round() as u32, converted_size.round() as u32, vertices_per_unit, Vector2::new(-size / 2., -size / 2.));
+
+            let mut grid = Renderable::new(grid_verts.0, grid_verts.1, grid_verts.2, unsafe { engine::renderable::Shader::load_from_path("shaders/pos_shader") });
+            engine.add_renderable(grid);
     //     }
     // }
 
     // Renderable::new(vertices, indices, vec![], unsafe {Shader::load_from_path("shaders/orientation_shader")}),
     renderable.uniform_scale(0.1);
+    renderable.translate(0.0, 1.0, 0.0);
     engine.add_renderable(renderable);
     engine.callback = callback;
     engine.run();

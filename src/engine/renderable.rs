@@ -3,14 +3,17 @@ use std::ffi::{c_float, c_int, c_uint, CString};
 use std::fs::File;
 use std::io::BufReader;
 use std::mem::{size_of, transmute};
+use std::ops::Index;
 use std::os::raw::c_void;
 use std::path::Path;
 use std::ptr::null;
 
 use cgmath::{Array, Euler, Matrix, Matrix4, One, Rad, Vector2, Vector3, Vector4, Zero};
+use cgmath::num_traits::ToPrimitive;
 use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, FRAGMENT_SHADER, STATIC_DRAW, TEXTURE_2D, TEXTURE_WRAP_S, TEXTURE_WRAP_T, TRIANGLES, UNSIGNED_INT, VERTEX_SHADER};
 use gl::types::{GLenum, GLfloat, GLint, GLsizei, GLuint};
 use glfw::ffi::glfwGetTime;
+use image::open;
 use obj::{FromRawVertex, TexturedVertex, Vertex};
 use obj::raw::{parse_mtl, parse_obj};
 use obj::raw::material::{Material, MtlColor};
@@ -105,26 +108,22 @@ impl Shader {
 
         if mtl.diffuse_map.is_some() {
             let path = mtl.diffuse_map.clone().unwrap().file.clone().to_owned();
-            let img = image::io::Reader::open(mtl_dir.to_owned() + "/" + &path).expect("j").decode().expect("j");
-            ret.textures.insert("diffuse".to_owned(), Self::create_texture(img.as_bytes().as_ptr() as *const c_void, img.width() as i32, img.height() as i32));
+            ret.textures.insert("diffuse".to_owned(), Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()));
         }
 
         if mtl.ambient_map.is_some() {
             let path = mtl.ambient_map.clone().unwrap().file.clone().to_owned();
-            let img = image::io::Reader::open(mtl_dir.to_owned() + "/" + &path).expect("j").decode().expect("j");
-            ret.textures.insert("ambient".to_owned(), Self::create_texture(img.as_bytes().as_ptr() as *const c_void, img.width() as i32, img.height() as i32));
+            ret.textures.insert("ambient".to_owned(), Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()));
         }
 
         if mtl.specular_map.is_some() {
             let path = mtl.specular_map.clone().unwrap().file.clone().to_owned();
-            let img = image::io::Reader::open(mtl_dir.to_owned() + "/" + &path).expect("j").decode().expect("j");
-            ret.textures.insert("specular".to_owned(), Self::create_texture(img.as_bytes().as_ptr() as *const c_void, img.width() as i32, img.height() as i32));
+            ret.textures.insert("specular".to_owned(), Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()));
         }
 
         if mtl.emissive_map.is_some() {
             let path = mtl.emissive_map.clone().unwrap().file.clone().to_owned();
-            let img = image::io::Reader::open(mtl_dir.to_owned() + "/" + &path).expect("j").decode().expect("j");
-            ret.textures.insert("emissive".to_owned(), Self::create_texture(img.as_bytes().as_ptr() as *const c_void, img.width() as i32, img.height() as i32));
+            ret.textures.insert("emissive".to_owned(), Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()));
         }
         let mut vert_string = base_path.to_owned().clone();
         vert_string.push_str(".vert");
@@ -137,7 +136,7 @@ impl Shader {
         let mut passthroughs = "";
         let mut outs = "vec3 Normal;\nvec3 FragPos;\n".to_owned();
         let uniforms = "uniform mat4 model;";
-        let std140s = "layout (std140) uniform Matrices {\nmat4 projection;\nmat4 view;\n};";
+        let std140s = "layout (std140) uniform Matrices {vec3 cameraPos;\nmat4 view;\nmat4 projection;\n};";
         if mtl.ambient_map.clone().is_some() || mtl.diffuse_map.clone().is_some() || mtl.specular_map.clone().is_some() || mtl.emissive_map.is_some() {
             locations += "layout (location = 2) in vec2 aTexCoord;";
             passthroughs = "vs_out.TexCoord = aTexCoord;";
@@ -168,17 +167,18 @@ impl Shader {
                 uniforms.push_str(";\n");
             }
         }
-        for (i, v) in &ret.textures {
+        for i in 0..ret.textures.len() {
+            let texture_name = (&mut ret).textures.keys().nth(i).unwrap();
             let mut texture = "uniform sampler2D ".to_owned();
-            texture.push_str(&i);
+            texture.push_str(&texture_name.clone());
             texture.push_str(";\n");
             textures.push_str(&texture);
         }
         frag_source = frag_source.replace("//T: TEXTURES", &textures);
         frag_source = frag_source.replace("//T: LOGIC", &logic);
         frag_source = frag_source.replace("//T: UNIFORMS", &uniforms);
-        // println!("Bonk {}", vert_source);
-        // println!("Bank{}", frag_source);
+        println!("Bonk {}", vert_source);
+        println!("Bank{}", frag_source);
         ret.compile(CString::new(vert_source).expect("Jimbo jones"), CString::new(frag_source).expect("Jimbo jones"), CString::new("").expect("Jimbo jones"));
         ret.use_shader();
         for (i, v) in ret.values.clone() {
@@ -189,6 +189,12 @@ impl Shader {
             ret.set_vec4(vector, os.as_str());
         }
 
+        for (i, v) in ret.textures.clone() {
+            let os = i.clone();
+            let ov = v.clone();
+            ret.set_int(ret.textures.index(&os).to_i32().unwrap() - 1, os.as_str());
+            println!("index: {:?}", ret.textures.index(&os));
+        }
         return ret;
     }
 
@@ -268,6 +274,13 @@ impl Shader {
         // gl::GenTextures(1, &mut self.texture);
         // gl::BindTexture(TEXTURE_2D, self.texture);
     }
+    unsafe fn load_texture(path: &str) -> u32 {
+        let img = open(path).expect("Jimbo jones");
+        let height = img.height();
+        let width = img.width();
+        let data = img.to_rgb8().into_raw();
+        Self::create_texture(&data[0] as *const u8 as *const c_void, width as i32, height as i32)
+    }
     unsafe fn create_texture(data: *const c_void, width: i32, height: i32) -> u32 {
         let mut texture = 0;
         gl::GenTextures(1, &mut texture);
@@ -283,6 +296,7 @@ impl Shader {
             gl::ActiveTexture((gl::TEXTURE0 as c_int + num) as GLenum);
             gl::BindTexture(gl::TEXTURE_2D, v);
         }
+        // println!("{:?}", self.textures.len() as c_int);
     }
 
     pub unsafe fn bind_matrices(&mut self) {
@@ -310,6 +324,11 @@ impl Shader {
             let error = self.get_shader_error();
             panic!("Couldn't find location {}, {}, {}", name, error, self.path);
         }
+    }
+    pub unsafe fn set_int(&mut self, int: i32, name: &str) {
+        let location = self.get_uniform_location(name);
+        self.panic_if_error(location, name);
+        gl::Uniform1i(location, int)
     }
     pub unsafe fn set_mat4(&mut self, matrix4: Matrix4<f32>, name: &str) {
         let location = self.get_uniform_location(name);
@@ -350,6 +369,34 @@ pub struct Renderable {
 }
 
 impl Renderable {
+    pub(crate) fn new_with_tex(vertices: Vec<Vector3<f32>>, indices: Vec<u32>, normals: Vec<Vector3<f32>>, tex_coords: Vec<Vector2<f32>>, shader: Shader) -> Renderable {
+        let mut ret = Renderable {
+            vertices,
+            indices,
+            shader,
+            vertex_array: 0,
+            vertex_buffer: 0,
+            element_buffer: 0,
+            rotation: Vector3::zero(),
+            translation: Vector3::zero(),
+            scale: Vector3::new(1., 1., 1.),
+            normals,
+            tex_coords,
+        };
+        unsafe {
+            ret.gen_buffers();
+            gl::BindVertexArray(ret.vertex_array);
+
+            ret.init_array_buffers();
+
+            ret.gen_vertex_attrib_arrays();
+
+            gl::BindBuffer(ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+        }
+        return ret;
+    }
+
     pub(crate) fn new(vertices: Vec<Vector3<f32>>, indices: Vec<u32>, normals: Vec<Vector3<f32>>, shader: Shader) -> Renderable {
         let mut ret = Renderable {
             vertices,
@@ -365,14 +412,49 @@ impl Renderable {
             tex_coords: Vec::new(),
         };
         unsafe {
-            gl::GenBuffers(1, &mut ret.vertex_buffer);
-            gl::GenVertexArrays(1, &mut ret.vertex_array);
-            gl::GenBuffers(1, &mut ret.element_buffer);
+            ret.gen_buffers();
 
             gl::BindVertexArray(ret.vertex_array);
 
-            let vertex_data = ret.build_vertex_data();
-            gl::BindBuffer(ARRAY_BUFFER, ret.vertex_buffer);
+            ret.init_array_buffers();
+
+            ret.gen_vertex_attrib_arrays();
+            //
+            // gl::EnableVertexAttribArray(1);
+            // gl::VertexAttribPointer(1, 3, FLOAT, FALSE, (6 * size_of::<GLfloat>()) as GLsizei, (3 * size_of::<GLfloat>()) as *const _);
+
+            gl::BindBuffer(ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+        }
+        return ret;
+    }
+    unsafe fn gen_vertex_attrib_arrays(&mut self) {
+        let mut stride = 2 * (3 * size_of::<GLfloat>()) as GLsizei;
+        if self.tex_coords.len() > 0 {
+            stride = (2 * (3 * size_of::<GLfloat>()) + (2 * size_of::<GLfloat>())) as GLsizei;
+        }
+        gl::VertexAttribPointer(0, 3, FLOAT, FALSE, stride, 0 as *const _);
+        gl::EnableVertexAttribArray(0);
+
+        gl::VertexAttribPointer(1, 3, FLOAT, FALSE, stride, (3 * size_of::<GLfloat>()) as *const _);
+        gl::EnableVertexAttribArray(1);
+
+        if (self.tex_coords.len() > 0) {
+            gl::VertexAttribPointer(2, 2, FLOAT, FALSE, stride, (6 * size_of::<GLfloat>()) as *const _);
+            gl::EnableVertexAttribArray(2);
+        }
+    }
+    fn gen_buffers(&mut self) {
+        unsafe {
+            gl::GenBuffers(1, &mut self.vertex_buffer);
+            gl::GenVertexArrays(1, &mut self.vertex_array);
+            gl::GenBuffers(1, &mut self.element_buffer);
+        }
+    }
+    fn init_array_buffers(&mut self) {
+        let vertex_data = self.build_vertex_data();
+        unsafe {
+            gl::BindBuffer(ARRAY_BUFFER, self.vertex_buffer);
             let size = (vertex_data.len() * size_of::<GLfloat>()) as isize;
             gl::BufferData(
                 ARRAY_BUFFER,
@@ -381,32 +463,14 @@ impl Renderable {
                 STATIC_DRAW,
             );
 
-            gl::BindBuffer(ELEMENT_ARRAY_BUFFER, ret.element_buffer);
+            gl::BindBuffer(ELEMENT_ARRAY_BUFFER, self.element_buffer);
             gl::BufferData(
                 ELEMENT_ARRAY_BUFFER,
-                (ret.indices.len() * size_of::<GLuint>()) as isize,
-                transmute(&ret.indices[0]),
+                (self.indices.len() * size_of::<GLuint>()) as isize,
+                transmute(&self.indices[0]),
                 STATIC_DRAW,
             );
-
-            gl::VertexAttribPointer(0, 3, FLOAT, FALSE, 2 * (3 * size_of::<GLfloat>()) as GLsizei, 0 as *const _);
-            gl::EnableVertexAttribArray(0);
-
-            gl::VertexAttribPointer(1, 3, FLOAT, FALSE, 2 * (3 * size_of::<GLfloat>()) as GLsizei, (3 * size_of::<GLfloat>()) as *const _);
-            gl::EnableVertexAttribArray(1);
-
-            if (ret.tex_coords.len() > 0) {
-                gl::VertexAttribPointer(2, 2, FLOAT, FALSE, 2 * (5 * size_of::<GLfloat>()) as GLsizei, (3 * size_of::<GLfloat>()) as *const _);
-                gl::EnableVertexAttribArray(2);
-            }
-            //
-            // gl::EnableVertexAttribArray(1);
-            // gl::VertexAttribPointer(1, 3, FLOAT, FALSE, (6 * size_of::<GLfloat>()) as GLsizei, (3 * size_of::<GLfloat>()) as *const _);
-            gl::BindBuffer(ARRAY_BUFFER, 0);
-
-            gl::BindVertexArray(0);
         }
-        return ret;
     }
     fn build_vertex_data(&mut self) -> Vec<c_float> {
         let mut vertex_data = Vec::new();
@@ -418,6 +482,11 @@ impl Renderable {
             vertex_data.push(self.normals[i].x);
             vertex_data.push(self.normals[i].y);
             vertex_data.push(self.normals[i].z);
+
+            if self.tex_coords.len() > 0 {
+                vertex_data.push(self.tex_coords[i].x);
+                vertex_data.push(self.tex_coords[i].y);
+            }
         }
         return vertex_data;
     }
@@ -437,37 +506,11 @@ impl Renderable {
         // let parsed_obj: Obj<TexturedVertex> = Obj::new(obj).expect("Jimbo jones the fourth");
         let (vertices, indices) = FromRawVertex::<u32>::process(obj.positions, obj.normals, obj.tex_coords.clone(), obj.polygons).expect("");
 
-        // let mut verts: Vec<f32> = Vec::new();
-        // let mut normals = Vec::new();
-        // for i in obj.vertices.iter() {
-        //     verts.push(i.position[0]);
-        //     verts.push(i.position[1]);
-        //     verts.push(i.position[2]);
-        //
-        //     normals.push(i.normal[0]);
-        //     normals.push(i.normal[1]);
-        //     normals.push(i.normal[2]);
-        // }
-        // verts = obj.vertices.iter().map(|x| x.position.iter().flatten()).collect();
-        // for i in obj.vertices.iter() {
-        //     verts.push(i.position[0]);
-        //     verts.push(i.position[1]);
-        //     verts.push(i.position[2]);
-        //
-        // }
-        // let mut indices = Vec::new();
-        // for i in indices.iter() {
-        //     indices.push(*i as u32);
-        // }
-        // let shader = Shader::load_from_path(shaderpath);
         let raw_mtl = parse_mtl(BufReader::new(File::open((path_dir.to_str().unwrap().to_owned()) + "/" + &obj.material_libraries[0]).expect("Jimbo jones the fifth"))).expect("Jimbo jones the sixth");
         let new_shader = Shader::load_from_mtl(raw_mtl.materials.get("Material.001").expect("Jimbo jones the seventh").clone(), path_dir.to_str().unwrap(), shaderpath);
-        // let new_shader = Shader::load_from_path("shaders/pos_shader");
-        let mut ret = Renderable::new(vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), indices, vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), new_shader);
-        // if obj.tex_coords.len() > 0 {
-        //     ret.tex_coords = vertices.iter().map(|x| Vector2::new(x.texture[0], x.texture[1])).collect();
-        //     println!("{:?}", raw_mtl);
-        // }
+        // let new_shader = Shader::load_from_path("shaders/comp_base_shader");
+        let mut ret = Renderable::new_with_tex(vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), indices, vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), vertices.iter().map(|x| Vector2::new(x.texture[0], x.texture[1])).collect(), new_shader);
+        // let mut ret = Renderable::new(vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), indices, vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(),  new_shader);
         return ret;
     }
     unsafe fn build_model(&mut self) -> Matrix4<f32> {
@@ -480,10 +523,10 @@ impl Renderable {
     }
     pub unsafe fn render(&mut self) {
         let model = self.build_model();
+        self.shader.use_textures();
         self.shader.use_shader();
         self.shader.update();
         self.shader.set_mat4(model, "model");
-        self.shader.use_textures();
 
         gl::BindBuffer(ARRAY_BUFFER, self.vertex_buffer);
         gl::BindVertexArray(self.vertex_array);

@@ -156,12 +156,11 @@ impl Engine {
                 (self.callback)(&mut self.data, &mut frame);
                 imgui_glfw.draw(frame, &mut self.window);
                 imgui_glfw.get_renderer().render(&mut imgui);
-
             }
 
             self.window.swap_buffers();
             self.glfw.poll_events();
-            for (_, event ) in glfw::flush_messages(&self.events) {
+            for (_, event) in glfw::flush_messages(&self.events) {
                 // println!("{:?}", event);
                 imgui_glfw.handle_event(&mut imgui, &event);
                 match event {
