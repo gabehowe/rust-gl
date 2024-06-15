@@ -19,18 +19,14 @@ out GS_OUT {
 
 uniform mat4 model;
 
+
 void main() {
-    gs_out.Normal = gs_in[0].Normal;
-    gs_out.FragPos = gs_in[0].FragPos;
-    gl_Position = gl_in[0].gl_Position;
-    EmitVertex();
-    gs_out.Normal = gs_in[1].Normal;
-    gs_out.FragPos = gs_in[1].FragPos;
-    gl_Position = gl_in[1].gl_Position;
-    EmitVertex();
-    gs_out.Normal = gs_in[2].Normal;
-    gs_out.FragPos = gs_in[2].FragPos;
-    gl_Position = gl_in[2].gl_Position;
-    EmitVertex();
+    for (int i = 0; i < 3; i++){
+        gs_out.FragPos = gs_in[i].FragPos;
+//        gl_Position = vec4(gl_in[i].gl_Position.x, gl_in[i].gl_Position.y, n, 1.0);
+        gl_Position = gl_in[i].gl_Position;
+        gs_out.Normal = gs_in[i].Normal;
+        EmitVertex();
+    }
     EndPrimitive();
 }

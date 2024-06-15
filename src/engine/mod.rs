@@ -5,11 +5,12 @@ use std::io::Read;
 use std::ptr;
 
 use cgmath::{InnerSpace, Vector3};
-use gl::{COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION, DEBUG_SOURCE_API, DEBUG_TYPE_ERROR, DEPTH_BUFFER_BIT, DEPTH_TEST, FILL, FRONT_AND_BACK, LINE, PROGRAM_POINT_SIZE};
+use gl::{COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION, DEBUG_SOURCE_API, DEBUG_TYPE_ERROR, DEPTH_BUFFER_BIT, DEPTH_TEST, FILL, FRONT_AND_BACK};
 use glfw::{Action, Context, CursorMode, fail_on_errors, Glfw, GlfwReceiver, Key, PWindow, WindowEvent, WindowHint};
 use glfw::ffi::*;
 use imgui::*;
-use renderable::{Renderable, Shader};
+
+use renderable::Renderable;
 use transformation::Camera;
 use util::debug_log;
 
@@ -23,7 +24,7 @@ const MOVESPEED: f32 = 0.025;
 const ROTATIONSPEED: f32 = 0.025;
 
 pub struct Data {
-    renderables: Vec<Renderable>,
+    pub(crate) renderables: Vec<Renderable>,
     camera: Camera,
 }
 
@@ -41,25 +42,29 @@ impl Data {
     }
 
     unsafe fn handle_input(&mut self, window: &PWindow) {
+        let mut speed = MOVESPEED;
+        if glfwGetKey(window.window_ptr(), KEY_LEFT_SHIFT) == PRESS {
+            speed *= 3.0;
+        }
         if glfwGetKey(window.window_ptr(), KEY_D) == PRESS {
-            self.camera.pos += self.camera.front.cross(Vector3::new(0.0, 1.0, 0.0)).normalize() * MOVESPEED;
+            self.camera.pos += self.camera.front.cross(Vector3::new(0.0, 1.0, 0.0)).normalize() * speed;
         }
         if glfwGetKey(window.window_ptr(), KEY_A) == PRESS {
-            self.camera.pos -= self.camera.front.cross(Vector3::new(0.0, 1.0, 0.0)).normalize() * MOVESPEED;
+            self.camera.pos -= self.camera.front.cross(Vector3::new(0.0, 1.0, 0.0)).normalize() * speed;
         }
 
         if glfwGetKey(window.window_ptr(), KEY_S) == PRESS {
-            self.camera.pos -= self.camera.front * MOVESPEED;
+            self.camera.pos -= self.camera.front * speed;
         }
         if glfwGetKey(window.window_ptr(), KEY_W) == PRESS {
-            self.camera.pos += self.camera.front * MOVESPEED;
+            self.camera.pos += self.camera.front * speed;
         }
 
         if glfwGetKey(window.window_ptr(), KEY_E) == PRESS {
-            self.camera.translate(Vector3::new(0.0, MOVESPEED, 0.0));
+            self.camera.translate(Vector3::new(0.0, speed, 0.0));
         }
         if glfwGetKey(window.window_ptr(), KEY_Q) == PRESS {
-            self.camera.translate(Vector3::new(0.0, -MOVESPEED, 0.0));
+            self.camera.translate(Vector3::new(0.0, -speed, 0.0));
         }
 
 
@@ -90,23 +95,26 @@ pub(crate) struct Engine {
     glfw: Glfw,
     window: PWindow,
     events: GlfwReceiver<(f64, WindowEvent)>,
+    framerate: f64,
     pub data: Data,
-    pub callback: fn(&mut Data),
+    pub callback: fn(&mut Data, &mut Ui),
 }
 
 impl Engine {
     pub fn new() -> Engine {
-        let (glfw, window, events) = init_gflw();
+        let (glfw, mut window, events) = init_gflw();
         let camera = Engine::init_gl();
         Engine {
             glfw,
             window,
             events,
+            framerate: 0.0,
             data: Data {
                 renderables: vec![],
                 camera,
             },
-            callback: |_| {},
+            callback: |_, _| {},
+
         }
     }
     pub(crate) fn add_renderable(&mut self, mut renderable: Renderable) {
@@ -116,10 +124,10 @@ impl Engine {
 
     fn init_gl() -> Camera {
         // unsafe { gl::PolygonMode(FRONT_AND_BACK, LINE); }
-
         let mut camera = Camera::new();
         unsafe {
             camera.initialize_buffers();
+            gl::CullFace(gl::BACK);
         }
         return camera;
     }
@@ -130,17 +138,32 @@ impl Engine {
 
     fn process_events(&mut self) {
         let mut wireframe = false;
+        let mut time_now = unsafe { glfwGetTime() };
+        // let mut renderer = imgui_opengl_renderer::Renderer::new(&mut ctx, |s| self.window.get_proc_address(s) as _);
+
+        let mut imgui = imgui::Context::create();
+        let mut imgui_glfw = imgui_glfw_rs::ImguiGLFW::new(&mut imgui, &mut self.window);
+        let window_size = self.window.get_size();
+        self.framerate = 0.0;
+        println!("Window Size: {:?}", window_size);
+        imgui.io_mut().display_size = [window_size.0 as f32, window_size.1 as f32];
         while !self.window.should_close() {
             unsafe {
                 self.data.handle_input(&self.window);
                 self.data.render();
-                (self.callback)(&mut self.data);
+
+                let mut frame = (&mut imgui).frame();
+                (self.callback)(&mut self.data, &mut frame);
+                imgui_glfw.draw(frame, &mut self.window);
+                imgui_glfw.get_renderer().render(&mut imgui);
+
             }
 
             self.window.swap_buffers();
             self.glfw.poll_events();
-            for (_, event) in glfw::flush_messages(&self.events) {
+            for (_, event ) in glfw::flush_messages(&self.events) {
                 // println!("{:?}", event);
+                imgui_glfw.handle_event(&mut imgui, &event);
                 match event {
                     WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
                         self.window.set_should_close(true);
@@ -155,21 +178,28 @@ impl Engine {
                     }
                     WindowEvent::Key(Key::F2, _, Action::Press, _) => {
                         if !wireframe {
-                            unsafe {gl::PolygonMode(FRONT_AND_BACK, gl::LINE) };
+                            unsafe { gl::PolygonMode(FRONT_AND_BACK, gl::LINE) };
                         } else {
-                            unsafe { gl::PolygonMode(FRONT_AND_BACK, FILL);}
+                            unsafe { gl::PolygonMode(FRONT_AND_BACK, FILL); }
                         }
                         println!("Wireframe: {}", wireframe);
                         wireframe = !wireframe;
                     }
                     WindowEvent::CursorPos(x, y) => unsafe {
                         // println!("{}, {}", x, y);
-                        self.data.camera.handle_mouse(x, y);
+                        if (self.window.get_cursor_mode() == CursorMode::Disabled) {
+                            self.data.camera.handle_mouse(x, y);
+                        }
                         // unsafe { glfwSetCursorPos(window.window_ptr(), (WIDTH / 2) as c_double, HEIGHT as c_double / 2.0); }
                     }
                     _ => {}
                 }
             }
+
+            let frame_time = unsafe { glfwGetTime() };
+            self.framerate = 1.0 / (frame_time - time_now);
+            time_now = frame_time;
+            // println!("Frame rate: {}", frame_rate);
         }
     }
 }
@@ -192,10 +222,12 @@ fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     window.set_framebuffer_size_polling(true);
     window.set_key_polling(true);
     window.set_cursor_pos_polling(true);
+    window.set_mouse_button_polling(true);
+    window.set_scroll_polling(true);
 
     gl::load_with(|s| glfw.get_proc_address_raw(s));
     unsafe {
-        // glfwSetInputMode(window.window_ptr(), CURSOR, CURSOR_DISABLED);
+        glfwSetInputMode(window.window_ptr(), CURSOR, CURSOR_DISABLED);
         gl::Enable(DEPTH_TEST);
         gl::Enable(DEBUG_OUTPUT);
         gl::Enable(DEBUG_OUTPUT_SYNCHRONOUS);

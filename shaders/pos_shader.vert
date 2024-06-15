@@ -9,6 +9,7 @@ layout (std140) uniform Matrices {
 };
 
 uniform mat4 model;
+uniform float time;
 
 out VS_OUT {
     vec3 Normal;
@@ -19,5 +20,5 @@ void main()
 {
     vs_out.Normal = mat3(transpose(inverse(model))) * aNormal;
     vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
-    gl_Position = projection * view * model * vec4(aPos, 1.0);
+    gl_Position = projection * view * model * vec4(aPos.xyz, 1.0);
 }

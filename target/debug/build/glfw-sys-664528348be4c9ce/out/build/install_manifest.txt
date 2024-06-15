@@ -1,8 +1,0 @@
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/lib/libglfw3.a
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/include/GLFW/glfw3.h
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/include/GLFW/glfw3native.h
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/lib/cmake/glfw3/glfw3Config.cmake
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/lib/cmake/glfw3/glfw3ConfigVersion.cmake
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/lib/cmake/glfw3/glfw3Targets.cmake
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/lib/cmake/glfw3/glfw3Targets-debug.cmake
-/home/gabri/dev/projects/5c19b154-4adf-492c-b7d8-cc5da2b1fbc3/target/debug/build/glfw-sys-664528348be4c9ce/out/lib/pkgconfig/glfw3.pc

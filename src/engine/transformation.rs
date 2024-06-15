@@ -141,10 +141,10 @@ impl Camera {
         let delta_y = y - self.last_mouse.1;
         // println!("{} {}", delta_x, delta_y);
         self.last_mouse = (x, y);
-        let sensitivity = 0.0001;
+        let sensitivity = 0.001;
 
         self.pitch -= delta_y as f32 * sensitivity;
-        self.yaw -= delta_x as f32 * sensitivity;
+        self.yaw += delta_x as f32 * sensitivity;
 
         self.front = Vector3::new(
             self.pitch.cos() * self.yaw.cos(),
