@@ -2,26 +2,28 @@ use cgmath::Vector3;
 use imgui::Ui;
 use noise::{NoiseFn, Vector2};
 
-use crate::engine::Data;
+use crate::engine::{Data, Engine};
 use crate::engine::renderable::Renderable;
 
 mod engine;
+const FRAME_SECONDS: usize = 60;
+static mut FRAMES: [f32; FRAME_SECONDS * 60] = [0.0; 60 * FRAME_SECONDS];
 
 fn main() {
-    let mut engine = engine::Engine::new();
+    let mut engine = Engine::new(true);
     let mut renderable = unsafe { Renderable::from_obj("objects/monkey_test.obj", "shaders/base_shader") };
     // let grid_size = 3;
     // for i in -grid_size..grid_size + 1 {
     //     for j in -grid_size..grid_size + 1 {
-            let size = 20.;
+    let size = 20.;
 
-            let vertices_per_unit = 0.1;
-            let converted_size: f32 = size / vertices_per_unit;
-            println!("{:?}", converted_size.round() as u32);
-            let grid_verts = create_grid(converted_size.round() as u32, converted_size.round() as u32, vertices_per_unit, Vector2::new(-size / 2., -size / 2.));
+    let vertices_per_unit = 0.1;
+    let converted_size: f32 = size / vertices_per_unit;
+    println!("{:?}", converted_size.round() as u32);
+    let grid_verts = create_grid(converted_size.round() as u32, converted_size.round() as u32, vertices_per_unit, Vector2::new(-size / 2., -size / 2.));
 
-            let mut grid = Renderable::new(grid_verts.0, grid_verts.1, grid_verts.2, unsafe { engine::renderable::Shader::load_from_path("shaders/pos_shader") });
-            engine.add_renderable(grid);
+    let mut grid = Renderable::new(grid_verts.0, grid_verts.1, grid_verts.2, unsafe { engine::renderable::Shader::load_from_path("shaders/pos_shader") });
+    engine.add_renderable(grid);
     //     }
     // }
 
@@ -29,12 +31,30 @@ fn main() {
     renderable.uniform_scale(0.1);
     renderable.translate(0.0, 1.0, 0.0);
     engine.add_renderable(renderable);
-    engine.callback = callback;
-    engine.run();
+    while engine.should_keep_running() {
+        engine.update(callback);
+    }
 }
 
-fn callback(data: &mut Data, imgui: &mut Ui) {
+fn callback(imgui: &mut Ui) {
+    // imgui.show_demo_window(&mut true);
+    // let mut new_frames = [0.0; 60*FRAME_SECONDS];
+    // for i in 1..(60 * FRAME_SECONDS) {
+    //     unsafe {
+    //         new_frames[i - 1] = FRAMES[i];
+    //     }
+    // }
+    // unsafe {
+    //     FRAMES = new_frames;
+    // }
+    // unsafe {
+    //     FRAMES[60 * FRAME_SECONDS - 1] = engine.framerate as f32;
+    // }
+    // // imgui.show_demo_window(&mut true);
     // let w = imgui.window("Window :)");
+    // w.build(|| unsafe {
+    //     imgui.plot_lines(format!("{:.4} FPS", FRAMES[60 * FRAME_SECONDS - 1]), &FRAMES).build();
+    // });
     //
     // let mut n1_g_inf = 5;
     // let mut n2_g_inf = 3;

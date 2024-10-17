@@ -51,7 +51,8 @@ pub struct Shader {
     geo: u32,
     optionals: i32,
     textures: HashMap<String, u32>,
-    values: HashMap<String, Vec<f32>>,
+    vector_values: HashMap<String, Vec<f32>>,
+    values: HashMap<String, f32>,
 }
 
 impl Shader {
@@ -77,7 +78,8 @@ impl Shader {
             geo: 0,
             optionals: 0,
             textures: HashMap::new(),
-            values: HashMap::from([("ambient".to_owned(), vec![0.; 3]), ("diffuse".to_owned(), vec![0.; 3]), ("specular".to_owned(), vec![0.; 3]), ("emissive".to_owned(), vec![0.; 3])]),
+            vector_values: HashMap::from([("ambient".to_owned(), vec![0.; 3]), ("diffuse".to_owned(), vec![0.; 3]), ("specular".to_owned(), vec![0.; 3]), ("emissive".to_owned(), vec![0.; 3])]),
+            values: HashMap::new(),
         };
         ret.compile(vert_source, frag_source, geo_source);
         return ret;
@@ -91,19 +93,26 @@ impl Shader {
             geo: 0,
             optionals: 0,
             textures: HashMap::new(),
-            values: HashMap::new(),
+            vector_values: HashMap::new(),
+            values: Default::default(),
         };
         if mtl.ambient.is_some() {
-            ret.values.insert("ambient".to_owned(), from_color(mtl.ambient));
+            ret.vector_values.insert("ambient".to_owned(), from_color(mtl.ambient));
         }
         if mtl.diffuse.is_some() {
-            ret.values.insert("diffuse".to_owned(), from_color(mtl.diffuse));
+            ret.vector_values.insert("diffuse".to_owned(), from_color(mtl.diffuse));
         }
         if mtl.specular.is_some() {
-            ret.values.insert("specular".to_owned(), from_color(mtl.specular));
+            ret.vector_values.insert("specular".to_owned(), from_color(mtl.specular));
         }
         if mtl.emissive.is_some() {
-            ret.values.insert("emissive".to_owned(), from_color(mtl.emissive));
+            ret.vector_values.insert("emissive".to_owned(), from_color(mtl.emissive));
+        }
+        if mtl.optical_density.is_some() {
+            let ior = mtl.optical_density.unwrap();
+            // let specular = ((ior-1.0)/(ior+1.0)).powf(2.0)/0.08;
+            let specular = 256.0;
+            ret.values.insert("specular_exponent".to_owned(), specular);
         }
 
         if mtl.diffuse_map.is_some() {
@@ -167,9 +176,12 @@ impl Shader {
                 uniforms.push_str(";\n");
             }
         }
+        if ret.values.contains_key("specular_exponent") {
+            uniforms.push_str("uniform float specular_exponent;\n");
+        }
         for i in 0..ret.textures.len() {
             let texture_name = (&mut ret).textures.keys().nth(i).unwrap();
-            let mut texture = "uniform sampler2D ".to_owned();
+            let mut texture = format!("layout (binding={i}) uniform sampler2D ").to_owned();
             texture.push_str(&texture_name.clone());
             texture.push_str(";\n");
             textures.push_str(&texture);
@@ -177,24 +189,21 @@ impl Shader {
         frag_source = frag_source.replace("//T: TEXTURES", &textures);
         frag_source = frag_source.replace("//T: LOGIC", &logic);
         frag_source = frag_source.replace("//T: UNIFORMS", &uniforms);
-        println!("Bonk {}", vert_source);
-        println!("Bank{}", frag_source);
         ret.compile(CString::new(vert_source).expect("Jimbo jones"), CString::new(frag_source).expect("Jimbo jones"), CString::new("").expect("Jimbo jones"));
         ret.use_shader();
-        for (i, v) in ret.values.clone() {
+        for (i, v) in ret.vector_values.clone() {
             let ov = v.clone();
             let vector = Vector4::new(ov[0], ov[1], ov[2], 1.0);
             let os = i.clone();
             // println!("{}", i);
             ret.set_vec4(vector, os.as_str());
         }
-
-        for (i, v) in ret.textures.clone() {
+        for (i, v) in ret.values.clone() {
             let os = i.clone();
             let ov = v.clone();
-            ret.set_int(ret.textures.index(&os).to_i32().unwrap() - 1, os.as_str());
-            println!("index: {:?}", ret.textures.index(&os));
+            ret.set_float(ov, os.as_str());
         }
+
         return ret;
     }
 
@@ -219,8 +228,8 @@ impl Shader {
             self.compile_subshader(geo_source, self.geo);
         }
         println!("{:?}", self.geo);
-        println!("{:?}", vert_source);
-        println!("{:?}", frag_source);
+        println!("{:?}", vert_source.to_str().unwrap().replace("\\n", "\r\n"));
+        println!("{:?}", frag_source.to_str().unwrap().replace("\\n", "\r\n"));
 
         self.compile_subshader(vert_source, self.vert);
         self.compile_subshader(frag_source, self.frag);
@@ -269,7 +278,7 @@ impl Shader {
     unsafe fn setup_textures() {
         gl::TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, gl::REPEAT as i32);
         gl::TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, gl::REPEAT as i32);
-        gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
+        gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
         gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
         // gl::GenTextures(1, &mut self.texture);
         // gl::BindTexture(TEXTURE_2D, self.texture);
@@ -287,16 +296,14 @@ impl Shader {
         gl::BindTexture(TEXTURE_2D, texture);
         Self::setup_textures();
         gl::TexImage2D(TEXTURE_2D, 0, gl::RGB as i32, width, height, 0, gl::RGB, gl::UNSIGNED_BYTE, data);
-        gl::GenerateMipmap(TEXTURE_2D);
-        return texture;
+        // gl::GenerateMipmap(TEXTURE_2D);
+        gl::BindTexture(TEXTURE_2D, 0);
+        texture
     }
     unsafe fn use_textures(&mut self) {
-        let mut num: c_int = 0;
-        for (i, v) in self.textures.clone() {
-            gl::ActiveTexture((gl::TEXTURE0 as c_int + num) as GLenum);
-            gl::BindTexture(gl::TEXTURE_2D, v);
-        }
-        // println!("{:?}", self.textures.len() as c_int);
+        let vals = self.textures.values().cloned().collect::<Vec<u32>>();
+        if vals.len() == 0 { return; }
+        gl::BindTextures(0, self.textures.len() as GLsizei, vals.as_ptr());
     }
 
     pub unsafe fn bind_matrices(&mut self) {
@@ -523,8 +530,8 @@ impl Renderable {
     }
     pub unsafe fn render(&mut self) {
         let model = self.build_model();
-        self.shader.use_textures();
         self.shader.use_shader();
+        self.shader.use_textures();
         self.shader.update();
         self.shader.set_mat4(model, "model");
 
