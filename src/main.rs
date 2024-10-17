@@ -37,6 +37,7 @@ fn main() {
 }
 
 fn callback(imgui: &mut Ui) {
+    imgui.show_demo_window(&mut true);
     // imgui.show_demo_window(&mut true);
     // let mut new_frames = [0.0; 60*FRAME_SECONDS];
     // for i in 1..(60 * FRAME_SECONDS) {

@@ -152,12 +152,12 @@ impl Engine {
         }
         // Allow for disabling imgui
         if self.event_handler.imgui.is_some() {
-            // let imgui_glfw_ref = self.event_handler.imgui_glfw.as_mut().unwrap();
-            // let imgui_ref = self.event_handler.imgui.as_mut().unwrap();
-            // let mut frame = imgui_ref.frame();
-            // imgui_callback(&mut frame);
-            // imgui_glfw_ref.draw(frame, &mut self.window);
-            // imgui_glfw_ref.get_renderer().render(imgui_ref);
+            let imgui_glfw_ref = self.event_handler.imgui_glfw.as_mut().unwrap();
+            let imgui_ref = self.event_handler.imgui.as_mut().unwrap();
+            let mut frame = imgui_ref.frame();
+            imgui_callback(&mut frame);
+            imgui_glfw_ref.draw(frame, &mut self.window);
+            imgui_glfw_ref.get_renderer().render(imgui_ref);
         }
 
         self.window.swap_buffers();
@@ -165,7 +165,7 @@ impl Engine {
         for (_, event) in glfw::flush_messages(&self.events) {
             // println!("{:?}", event);
             if self.event_handler.imgui.is_some() {
-                // self.event_handler.imgui_glfw.as_mut().unwrap().handle_event(self.event_handler.imgui.as_mut().unwrap(), &event);
+                self.event_handler.imgui_glfw.as_mut().unwrap().handle_event(self.event_handler.imgui.as_mut().unwrap(), &event);
             }
             match event {
                 WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
