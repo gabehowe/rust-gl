@@ -1,9 +1,10 @@
+use cgmath::num_traits::ToPrimitive;
 use cgmath::Vector3;
-use imgui::Ui;
+use imgui::{Condition, Ui};
 use noise::{NoiseFn, Vector2};
 
 use crate::engine::{Data, Engine};
-use crate::engine::renderable::Renderable;
+use crate::engine::renderable::{Renderable, Shader};
 
 mod engine;
 const FRAME_SECONDS: usize = 60;
@@ -11,7 +12,6 @@ static mut FRAMES: [f32; FRAME_SECONDS * 60] = [0.0; 60 * FRAME_SECONDS];
 
 fn main() {
     let mut engine = Engine::new(true);
-    let mut renderable = unsafe { Renderable::from_obj("objects/monkey_test.obj", "shaders/base_shader") };
     // let grid_size = 3;
     // for i in -grid_size..grid_size + 1 {
     //     for j in -grid_size..grid_size + 1 {
@@ -20,92 +20,45 @@ fn main() {
     let vertices_per_unit = 0.1;
     let converted_size: f32 = size / vertices_per_unit;
     println!("{:?}", converted_size.round() as u32);
-    let grid_verts = create_grid(converted_size.round() as u32, converted_size.round() as u32, vertices_per_unit, Vector2::new(-size / 2., -size / 2.));
+    // let grid_verts = create_grid(converted_size.round() as u32, converted_size.round() as u32, vertices_per_unit, Vector2::new(-size / 2., -size / 2.));
+    //
+    // let mut grid = Renderable::new(grid_verts.0, grid_verts.1, grid_verts.2, unsafe { Shader::load_from_path("shaders/pos_shader") });
+    // engine.add_renderable(grid);
 
-    let mut grid = Renderable::new(grid_verts.0, grid_verts.1, grid_verts.2, unsafe { engine::renderable::Shader::load_from_path("shaders/pos_shader") });
-    engine.add_renderable(grid);
-    //     }
-    // }
+    let px_grid = create_grid(2, 2, 2.0, Vector2::new(-1.0, -1.0));
+    let mut px = Renderable::new(px_grid.0, px_grid.1, px_grid.2, unsafe { Shader::load_from_path("shaders/pixel_shader") });
+    px.translate(0.0, 0.0, 0.0);
+    px.rotate(0.5 * std::f32::consts::PI, 0.0, 0.0);
 
     // Renderable::new(vertices, indices, vec![], unsafe {Shader::load_from_path("shaders/orientation_shader")}),
-    renderable.uniform_scale(0.1);
-    renderable.translate(0.0, 1.0, 0.0);
-    engine.add_renderable(renderable);
+
+    // let mut renderable = unsafe { Renderable::from_obj("objects/chapel.obj", "shaders/base_shader") };
+    // renderable.uniform_scale(0.1);
+    // renderable.translate(0.0, 50.0, 0.0);
+    // engine.add_renderable(renderable);
+    engine.add_renderable(px);
+    let mut velocity = Vector3::new(0., 0., 0.);
+    let acceleration = Vector3::new(0., -9.81, 0.);
     while engine.should_keep_running() {
         engine.update(callback);
+
+        // let translation = (velocity * engine.frametime);
+        //
+        // velocity += acceleration;
+        //
+        // if engine.data.renderables[1].translation.y < 1.0 {
+        //     velocity.y = 0.0;
+        // }
+        // engine.data.renderables[1].translate(translation.x as f32, translation.y as f32, translation.z as f32);
     }
 }
 
-fn callback(imgui: &mut Ui) {
-    imgui.show_demo_window(&mut true);
+
+fn callback(imgui: &mut Ui, frametime: f64) {
     // imgui.show_demo_window(&mut true);
-    // let mut new_frames = [0.0; 60*FRAME_SECONDS];
-    // for i in 1..(60 * FRAME_SECONDS) {
-    //     unsafe {
-    //         new_frames[i - 1] = FRAMES[i];
-    //     }
-    // }
-    // unsafe {
-    //     FRAMES = new_frames;
-    // }
-    // unsafe {
-    //     FRAMES[60 * FRAME_SECONDS - 1] = engine.framerate as f32;
-    // }
-    // // imgui.show_demo_window(&mut true);
-    // let w = imgui.window("Window :)");
-    // w.build(|| unsafe {
-    //     imgui.plot_lines(format!("{:.4} FPS", FRAMES[60 * FRAME_SECONDS - 1]), &FRAMES).build();
-    // });
-    //
-    // let mut n1_g_inf = 5;
-    // let mut n2_g_inf = 3;
-    //
-    // let mut n1_f = 13;
-    // let mut n2_f = 20;
-    // let mut n3_f = 23;
-    //
-    // let mut n1_p = 30;
-    // let mut n2_p = 45;
-    // let mut n3_p = 5;
-    //
-    // w.build(|| {
-    //     imgui.label_text("Frame Rate", &format!("{:.4}", "Jim"));
-    //     imgui.slider("n1_g_inf", 0, 40, &mut n1_g_inf);
-    //     imgui.slider("n2_g_inf", 0, 40, &mut n2_g_inf);
-    //
-    //     imgui.slider("n1_f", 0, 50, &mut n1_f);
-    //     imgui.slider("n2_f", 0, 50, &mut n2_f);
-    //     imgui.slider("n3_f", 0, 50, &mut n3_f);
-    //
-    //     imgui.slider("n1_p", 0, 100, &mut n1_p);
-    //     imgui.slider("n2_p", 0, 100, &mut n2_p);
-    //     imgui.slider("n3_p", 0, 100, &mut n3_p);
-    // });
-    //
-    // for i in 0..data.renderables.len() {
-    //     let renderable = data.get_renderable_mut(i);
-    //
-    //     unsafe {
-    //         renderable.shader.use_shader();
-    //         renderable.shader.set_float(n1_g_inf as f32, "n1_g_inf");
-    //         renderable.shader.set_float((n2_g_inf as f32) / 40., "n2_g_inf");
-    //         renderable.shader.set_float(n1_f as f32, "n1_f");
-    //         renderable.shader.set_float(n2_f as f32, "n2_f");
-    //         renderable.shader.set_float(n3_f as f32, "n3_f");
-    //         renderable.shader.set_float((n1_p as f32) / 100., "n1_p");
-    //         renderable.shader.set_float((n2_p as f32) / 100., "n2_p");
-    //         renderable.shader.set_float((n3_p as f32) / 100., "n3_p");
-    //     }
-    // }
-    // // let offset = unsafe {glfwGetTime()} as f32;
-    // // let perlin = Perlin::new(1);
-    // // let renderable = data.get_renderable_mut(1);
-    // // for i in 0..renderable.vertices.len() {
-    // //     let noise = perlin.get([((renderable.vertices[i].x + offset) / 5.) as f64, ((renderable.vertices[i].z + offset) / 5.) as f64, 0.]) as c_float;
-    // //     renderable.vertices[i].y = noise / 2.;
-    // // }
-    // // println!("{:?}", renderable.vertices[90]);
-    // // unsafe { renderable.update_vertex_buffer() };
+    imgui.window("info").size([300.0, 100.0], Condition::Always).build(|| {
+        imgui.label_text("Framerate", ( 1.0/frametime ).to_string())
+    });
 }
 
 fn create_grid(width: u32, length: u32, scale: f32, pos: Vector2<f32>) -> (Vec<Vector3<f32>>, Vec<u32>, Vec<Vector3<f32>>) {

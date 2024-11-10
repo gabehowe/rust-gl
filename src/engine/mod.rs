@@ -6,13 +6,14 @@ use std::ptr;
 
 use cgmath::{InnerSpace, Vector3};
 use gl::{COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION, DEBUG_SOURCE_API, DEBUG_TYPE_ERROR, DEPTH_BUFFER_BIT, DEPTH_TEST, FILL, FRONT_AND_BACK};
-use glfw::{Action, Context, CursorMode, fail_on_errors, Glfw, GlfwReceiver, Key, PWindow, WindowEvent, WindowHint};
+use glfw::{Action, Context, CursorMode, fail_on_errors, Glfw, GlfwReceiver, Key, PWindow, WindowEvent, WindowHint, SwapInterval};
 use glfw::ffi::*;
 use imgui::*;
-
+use obj::raw::material::{Material, MtlColor};
 use renderable::Renderable;
 use transformation::Camera;
 use util::debug_log;
+use crate::engine::renderable::Shader;
 
 pub mod util;
 pub mod transformation;
@@ -22,22 +23,23 @@ const HEIGHT: u32 = 1000;
 const WIDTH: u32 = HEIGHT * 16 / 9;
 const MOVESPEED: f32 = 0.025;
 const ROTATIONSPEED: f32 = 0.025;
+const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
 
 pub struct Data {
     pub(crate) renderables: Vec<Renderable>,
     camera: Camera,
+    wireframe_shader: Box<Shader>,
 }
 
 impl Data {
-    unsafe fn render(&mut self) {
-        gl::ClearColor(0.0, 0.0, 0.2, 1.0);
+    unsafe fn render(&mut self, wireframe: bool) {
+        gl::ClearColor(CLEARCOLOR.0, CLEARCOLOR.1, CLEARCOLOR.2, CLEARCOLOR.3);
         gl::Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
         self.camera.update_buffers();
         // unsafe {renderables[0].shader.set_vec3(Vector3::new(255.0, 0.0, 0.0), "ourColor");}
         // unsafe {renderables[1].shader.set_vec3(Vector3::new(0.0, 0.0, 255.0), "ourColor");}
-
         for i in &mut *self.renderables {
-            i.render();
+            i.render(if wireframe { Some(&mut self.wireframe_shader) } else { None });
         }
     }
 
@@ -114,6 +116,7 @@ impl Engine {
         unsafe {
             gl::GetString(gl::RENDERER);
         }
+
         Engine {
             glfw,
             window,
@@ -122,6 +125,25 @@ impl Engine {
             data: Data {
                 renderables: vec![],
                 camera,
+                wireframe_shader: unsafe {
+                    Box::from(Shader::load_from_mtl(Material {
+                        ambient: Some(MtlColor::Rgb(0.7, 0.3, 0.0)),
+                        diffuse: Some(MtlColor::Rgb(0.0, 0.0, 0.0)),
+                        specular: Some(MtlColor::Rgb(0.0, 0.0, 0.0)),
+                        emissive: Some(MtlColor::Rgb(0.0, 0.0, 0.0)),
+                        transmission_filter: None,
+                        illumination_model: None,
+                        dissolve: None,
+                        specular_exponent: Some(0.0),
+                        optical_density: Some(0.0),
+                        ambient_map: None,
+                        diffuse_map: None,
+                        specular_map: None,
+                        emissive_map: None,
+                        dissolve_map: None,
+                        bump_map: None,
+                    }, "objects", "shaders/base_shader"))
+                },
             },
             event_handler,
         }
@@ -138,6 +160,9 @@ impl Engine {
             camera.initialize_buffers();
             gl::CullFace(gl::BACK);
             gl::Enable(gl::TEXTURE_2D);
+            gl::LineWidth(0.1);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
         }
         return camera;
     }
@@ -145,17 +170,17 @@ impl Engine {
     pub(crate) fn should_keep_running(&mut self) -> bool {
         !self.window.should_close()
     }
-    pub(crate) fn update(&mut self, imgui_callback: fn(&mut Ui)) {
+    pub(crate) fn update(&mut self, imgui_callback: fn(&mut Ui, f64)) {
         unsafe {
             self.data.handle_input(&self.window);
-            self.data.render();
+            self.data.render(self.event_handler.wireframe);
         }
         // Allow for disabling imgui
         if self.event_handler.imgui.is_some() {
             let imgui_glfw_ref = self.event_handler.imgui_glfw.as_mut().unwrap();
             let imgui_ref = self.event_handler.imgui.as_mut().unwrap();
             let mut frame = imgui_ref.frame();
-            imgui_callback(&mut frame);
+            imgui_callback(&mut frame, self.frametime);
             imgui_glfw_ref.draw(frame, &mut self.window);
             imgui_glfw_ref.get_renderer().render(imgui_ref);
         }
@@ -261,6 +286,7 @@ fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     window.set_cursor_pos_polling(true);
     window.set_mouse_button_polling(true);
     window.set_scroll_polling(true);
+    glfw.set_swap_interval(SwapInterval::Sync(3));
 
     gl::load_with(|s| glfw.get_proc_address_raw(s));
     unsafe {

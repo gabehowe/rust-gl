@@ -1,22 +1,20 @@
 use std::collections::HashMap;
-use std::ffi::{c_float, c_int, c_uint, CString};
+use std::ffi::{c_float, c_uint, CString};
 use std::fs::File;
 use std::io::BufReader;
 use std::mem::{size_of, transmute};
-use std::ops::Index;
 use std::os::raw::c_void;
 use std::path::Path;
 use std::ptr::null;
 
 use cgmath::{Array, Euler, Matrix, Matrix4, One, Rad, Vector2, Vector3, Vector4, Zero};
-use cgmath::num_traits::ToPrimitive;
+use gl::types::{GLfloat, GLint, GLsizei, GLuint};
 use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, FRAGMENT_SHADER, STATIC_DRAW, TEXTURE_2D, TEXTURE_WRAP_S, TEXTURE_WRAP_T, TRIANGLES, UNSIGNED_INT, VERTEX_SHADER};
-use gl::types::{GLenum, GLfloat, GLint, GLsizei, GLuint};
 use glfw::ffi::glfwGetTime;
 use image::open;
-use obj::{FromRawVertex, TexturedVertex, Vertex};
-use obj::raw::{parse_mtl, parse_obj};
 use obj::raw::material::{Material, MtlColor};
+use obj::raw::{parse_mtl, parse_obj};
+use obj::{FromRawVertex, TexturedVertex, Vertex};
 
 use crate::engine::transformation::Transformation;
 use crate::engine::util::load_file;
@@ -39,7 +37,7 @@ fn from_color(color: Option<MtlColor>) -> Vec<f32> {
     if let Some(MtlColor::Rgb(r, g, b)) = color {
         return vec![r, g, b];
     }
-    return Vec::new();
+    Vec::new()
 }
 // A struct to build shaders depending on the options provided in the material.
 
@@ -82,7 +80,7 @@ impl Shader {
             values: HashMap::new(),
         };
         ret.compile(vert_source, frag_source, geo_source);
-        return ret;
+        ret
     }
     pub unsafe fn load_from_mtl(mtl: Material, mtl_dir: &str, base_path: &str) -> Shader {
         let mut ret = Shader {
@@ -368,9 +366,9 @@ pub struct Renderable {
     vertex_array: GLuint,
     vertex_buffer: GLuint,
     element_buffer: GLuint,
-    rotation: Vector3<f32>,
-    translation: Vector3<f32>,
-    scale: Vector3<f32>,
+    pub rotation: Vector3<f32>,
+    pub translation: Vector3<f32>,
+    pub scale: Vector3<f32>,
     normals: Vec<Vector3<f32>>,
     tex_coords: Vec<Vector2<f32>>,
 }
@@ -512,8 +510,7 @@ impl Renderable {
         let obj = parse_obj(input).expect("Jimb jones the third");
         // let parsed_obj: Obj<TexturedVertex> = Obj::new(obj).expect("Jimbo jones the fourth");
         let (vertices, indices) = FromRawVertex::<u32>::process(obj.positions, obj.normals, obj.tex_coords.clone(), obj.polygons).expect("");
-
-        let raw_mtl = parse_mtl(BufReader::new(File::open((path_dir.to_str().unwrap().to_owned()) + "/" + &obj.material_libraries[0]).expect("Jimbo jones the fifth"))).expect("Jimbo jones the sixth");
+        let raw_mtl = parse_mtl(BufReader::new(File::open((path_dir.to_str().unwrap().to_owned()) + "/" + &obj.material_libraries[0]).expect(format!("Cannot find file {}", (path_dir.to_str().unwrap().parse::<String>().unwrap() + "/" + &obj.material_libraries[0])).as_str()))).expect("Jimbo jones the sixth");
         let new_shader = Shader::load_from_mtl(raw_mtl.materials.get("Material.001").expect("Jimbo jones the seventh").clone(), path_dir.to_str().unwrap(), shaderpath);
         // let new_shader = Shader::load_from_path("shaders/comp_base_shader");
         let mut ret = Renderable::new_with_tex(vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), indices, vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), vertices.iter().map(|x| Vector2::new(x.texture[0], x.texture[1])).collect(), new_shader);
@@ -528,12 +525,19 @@ impl Renderable {
         // println!("{:?}", model);
         return model;
     }
-    pub unsafe fn render(&mut self) {
+    pub unsafe fn render(&mut self, shader_override: Option<&mut Box<Shader>>) {
         let model = self.build_model();
-        self.shader.use_shader();
-        self.shader.use_textures();
-        self.shader.update();
-        self.shader.set_mat4(model, "model");
+        // if shader_override.is_some() {
+        //     let mut shader: &mut Box<Shader> = shader_override.unwrap();
+        //     shader.use_shader();
+        //     shader.update();
+        //     shader.set_mat4(model, "model");
+        // } else {
+            self.shader.use_shader();
+            self.shader.use_textures();
+            self.shader.update();
+            self.shader.set_mat4(model, "model");
+        // }
 
         gl::BindBuffer(ARRAY_BUFFER, self.vertex_buffer);
         gl::BindVertexArray(self.vertex_array);

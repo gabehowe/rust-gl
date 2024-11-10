@@ -1,14 +1,10 @@
-use std::f32::consts::PI;
 use std::mem::transmute;
 use std::ptr::null;
 
-use cgmath::{Basis3, Deg, EuclideanSpace, Euler, Matrix, Matrix3, Matrix4, One, perspective, Point3, Rad, Rotation, Vector2, Vector3};
+use cgmath::{Deg, EuclideanSpace, Euler, Matrix, Matrix4, One, perspective, Point3, Rad, Vector2, Vector3};
 use gl::{STATIC_DRAW, UNIFORM_BUFFER};
 use gl::types::{GLsizeiptr, GLuint};
 use imgui::sys::cty::c_double;
-
-use crate::engine::renderable::Shader;
-
 
 pub trait Transformation {
     fn scale(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
