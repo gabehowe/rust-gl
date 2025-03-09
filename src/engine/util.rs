@@ -1,10 +1,12 @@
+use gl::types::GLenum;
 use std::ffi::{CStr, CString};
+use std::fmt;
 use std::fs::File;
 use std::io::Read;
 
 pub extern "system" fn debug_log(
     _: gl::types::GLenum,
-    kind: gl::types::GLenum,
+    _: gl::types::GLenum,
     _: gl::types::GLuint,
     _: gl::types::GLenum,
     _: gl::types::GLsizei,
@@ -15,10 +17,40 @@ pub extern "system" fn debug_log(
 }
 
 pub fn load_file(path: String) -> CString {
-    let mut file = File::open(path.as_str()).unwrap_or_else(|_| panic!("TODO: panic message"));
+    let mut file = File::open(path.as_str()).unwrap_or_else(|_| panic!("Failed to open file!"));
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .expect("TODO: panic message");
     let new_contents = CString::new(contents.as_bytes()).unwrap();
-    return new_contents
+    new_contents
+}
+/// These need to be disabled for performance, apparently.
+pub fn find_gl_error() -> Option<GLFunctionError> {
+    let error = unsafe { gl::GetError() };
+    if error != gl::NO_ERROR {
+        panic!("ah!");
+        Some(GLFunctionError::new(error.to_string()))
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GLFunctionError {
+    pub message: String,
+}
+impl GLFunctionError {
+    pub fn new(message: String) -> GLFunctionError {
+        GLFunctionError { message }
+    }
+}
+impl Default for GLFunctionError {
+    fn default() -> Self { GLFunctionError::new("".to_string())
+    }
+}
+impl std::error::Error for GLFunctionError {}
+impl fmt::Display for GLFunctionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "A GL Function failed with {}", self.message)
+    }
 }

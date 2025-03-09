@@ -11,6 +11,6 @@ image = "0.25.1"
 imgui = "0.12.0"
 noise = "0.9.0"
 obj-rs = "0.7.1"
-rust = "0.0.1"
 imgui-glfw-rs = { path="lib/imgui-glfw-rs-master" }
 imgui-opengl-renderer = { path="lib/rust-imgui-opengl-renderer" }
+uuid = { version = "1.11.0", features = ["v4"] }

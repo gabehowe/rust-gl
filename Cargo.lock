@@ -960,12 +960,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27536d990f1cdbda21d87a5e708a77510369e344b2c7a89bef48c775949a7f32"
-
-[[package]]
 name = "rust-gl"
 version = "0.1.0"
 dependencies = [
@@ -978,7 +972,7 @@ dependencies = [
  "imgui-opengl-renderer",
  "noise",
  "obj-rs",
- "rust",
+ "uuid",
 ]
 
 [[package]]
@@ -1146,6 +1140,15 @@ name = "unicode-ident"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
+
+[[package]]
+name = "uuid"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8c5f0a0af699448548ad1a2fbf920fb4bee257eae39953ba95cb84891a0446a"
+dependencies = [
+ "getrandom",
+]
 
 [[package]]
 name = "v_frame"
