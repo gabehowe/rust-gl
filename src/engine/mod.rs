@@ -1,6 +1,7 @@
 extern crate gl;
 extern crate glfw;
 
+use std::cell::RefCell;
 use std::error::Error;
 use std::ptr;
 
@@ -34,7 +35,7 @@ const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
 
 pub struct Data {
     pub(crate) renderables: Vec<Renderable>,
-    camera: Camera,
+    pub camera: Camera,
     wireframe_shader: Box<Shader>,
 }
 
@@ -55,6 +56,13 @@ impl Data {
                 None
             });
         }
+    }
+    pub(crate) fn add_renderable(&mut self, mut renderable: Renderable) -> usize {
+        unsafe {
+            renderable.shader.bind_matrices();
+        }
+        self.renderables.push(renderable);
+        self.renderables.len() - 1
     }
 
     fn handle_input(&mut self, window: &PWindow) {
@@ -192,12 +200,6 @@ impl Engine {
             .save(path)
             .expect("Failed to save image.");
     }
-    pub(crate) fn add_renderable(&mut self, mut renderable: Renderable) {
-        unsafe {
-            renderable.shader.bind_matrices();
-        }
-        self.data.renderables.push(renderable);
-    }
 
     fn init_gl() -> Camera {
         // unsafe { gl::PolygonMode(FRONT_AND_BACK, LINE); }
@@ -213,9 +215,10 @@ impl Engine {
         camera
     }
 
-    pub(crate) fn should_keep_running(&mut self) -> bool {
+    pub(crate) fn should_keep_running(&self) -> bool {
         !self.window.should_close()
     }
+
     pub(crate) fn update<F>(&mut self, mut imgui_callback: F)
     where
         F: FnMut(&mut Ui, f64, &mut Data),

@@ -19,7 +19,7 @@ use image::open;
 use obj::raw::material::{Material, MtlColor};
 use obj::raw::{parse_mtl, parse_obj};
 use obj::{FromRawVertex, TexturedVertex, Vertex};
-
+use log::debug;
 use crate::engine::transformation::Transformation;
 use crate::engine::util::{find_gl_error, load_file, GLFunctionError};
 pub trait SetValue<T> {
@@ -39,7 +39,7 @@ impl SetValue<Matrix4<f32>> for Shader {
         };
         match find_gl_error() {
             None => Ok(()),
-            Some(e) => {Err(e.to_string())}
+            Some(e) => Err(e.to_string()),
         }
     }
 }
@@ -55,7 +55,7 @@ impl SetValue<Matrix3<f32>> for Shader {
         };
         match find_gl_error() {
             None => Ok(()),
-            Some(e) => {Err(e.to_string())}
+            Some(e) => Err(e.to_string()),
         }
     }
 }
@@ -78,7 +78,7 @@ impl SetValue<f32> for Shader {
         unsafe { gl::Uniform1f(self.get_uniform_location(name)?, value) };
         match find_gl_error() {
             None => Ok(()),
-            Some(e) => {Err(e.to_string())}
+            Some(e) => Err(e.to_string()),
         }
     }
 }
@@ -87,7 +87,7 @@ impl SetValue<i32> for Shader {
         unsafe { gl::Uniform1i(self.get_uniform_location(name)?, value) }
         match find_gl_error() {
             None => Ok(()),
-            Some(e) => {Err(e.to_string())}
+            Some(e) => Err(e.to_string()),
         }
     }
 }
@@ -123,7 +123,7 @@ impl SetValue<Vec<u32>> for Shader {
 
         match find_gl_error() {
             None => Ok(()),
-            Some(e) => {Err(e.to_string())}
+            Some(e) => Err(e.to_string()),
         }
     }
 }
@@ -172,6 +172,7 @@ pub struct Shader {
     textures: HashMap<String, u32>,
     vector_values: HashMap<String, Vec<f32>>,
     values: HashMap<String, f32>,
+    debug_sources: Vec<CString>,
 }
 
 impl Shader {
@@ -204,11 +205,16 @@ impl Shader {
                 ("emissive".to_owned(), vec![0.; 3]),
             ]),
             values: HashMap::new(),
+            debug_sources: vec![vert_source.clone(), frag_source.clone(), geo_source.clone()],
         };
         ret.compile(vert_source, frag_source, geo_source);
         Ok(ret)
     }
-    pub fn load_from_mtl(mtl: Material, mtl_dir: &str, base_path: &str) -> Result<Shader, Box<dyn Error>> {
+    pub fn load_from_mtl(
+        mtl: Material,
+        mtl_dir: &str,
+        base_path: &str,
+    ) -> Result<Shader, Box<dyn Error>> {
         let mut ret = Shader {
             path: base_path.to_owned(),
             vert: Self::create_shader(VERTEX_SHADER)?,
@@ -219,6 +225,7 @@ impl Shader {
             textures: HashMap::new(),
             vector_values: HashMap::new(),
             values: Default::default(),
+            debug_sources: vec![],
         };
         if mtl.ambient.is_some() {
             ret.vector_values
@@ -277,10 +284,12 @@ impl Shader {
         let mut vert_string = base_path.to_owned().clone();
         vert_string.push_str(".vert");
         let mut vert_source = load_file(vert_string).to_str().unwrap().to_owned();
+        ret.debug_sources.push(CString::new(vert_source.clone()).unwrap());
         let mut frag_string = base_path.to_owned().clone();
         frag_string.push_str(".frag");
         let mut frag_source = load_file(frag_string).to_str().unwrap().to_owned();
-
+        ret.debug_sources.push(CString::new(frag_source.clone()).unwrap());
+        ret.debug_sources.push(CString::new("").unwrap());
         let mut locations =
             "layout (location = 0) in vec3 aPos;\nlayout (location = 1) in vec3 aNormal;\n"
                 .to_owned();
@@ -298,6 +307,7 @@ impl Shader {
             passthroughs = "vs_out.TexCoord = aTexCoord;";
             outs += "vec2 TexCoord;";
         }
+        vert_source = vert_source.replace("#proccessed", "");
         vert_source = vert_source.replace("//T: LOCATIONS", locations.as_str());
         vert_source = vert_source.replace("//T: PASSTHROUGHS", passthroughs);
         vert_source = vert_source.replace(
@@ -307,6 +317,7 @@ impl Shader {
         vert_source = vert_source.replace("//T: UNIFORMS", uniforms);
         vert_source = vert_source.replace("//T: STD140", std140s);
 
+        frag_source = frag_source.replace("#proccessed", "");
         frag_source = frag_source.replace(
             "//T: IN",
             format!("in VS_OUT {{\n{}}} fs_in;", outs).as_str(),
@@ -371,7 +382,7 @@ impl Shader {
             Ok(shader)
         }
     }
-    fn create_program() -> Result<GLuint, GLFunctionError>{
+    fn create_program() -> Result<GLuint, GLFunctionError> {
         let program = unsafe { gl::CreateProgram() };
         if program == 0 {
             Err(find_gl_error().unwrap_or_default())
@@ -408,9 +419,9 @@ impl Shader {
             self.geo = unsafe { gl::CreateShader(gl::GEOMETRY_SHADER) };
             self.compile_subshader(geo_source, self.geo);
         }
-        println!("{:?}", self.geo);
-        println!("{:?}", vert_source.to_str().unwrap().replace("\\n", "\r\n"));
-        println!("{:?}", frag_source.to_str().unwrap().replace("\\n", "\r\n"));
+        // println!("{:?}", self.geo);
+        // println!("{:?}", vert_source.to_str().unwrap().replace("\\n", "\r\n"));
+        // println!("{:?}", frag_source.to_str().unwrap().replace("\\n", "\r\n"));
 
         self.compile_subshader(vert_source, self.vert);
         self.compile_subshader(frag_source, self.frag);
@@ -445,14 +456,44 @@ impl Shader {
         String::from_utf8(v).expect("Couldn't convert to string.")
     }
     fn update(&mut self) -> Result<(), String> {
+        self.try_runtime_recompile();
         self.update_optionals()?;
         Ok(())
+    }
+    fn try_runtime_recompile(&mut self) {
+        let mut vert_string = self.path.to_owned().clone();
+        vert_string.push_str(".vert");
+
+        let mut frag_string = self.path.to_owned().clone();
+        frag_string.push_str(".frag");
+        let vert_source = load_file(vert_string);
+        let frag_source = load_file(frag_string);
+
+        let geo_string = format!("{}.geo", self.path);
+        let mut geo_source = Default::default();
+        if Path::new(&geo_string).exists() {
+            geo_source = load_file(geo_string);
+        }
+
+        if vert_source != CString::new(self.debug_sources[0].clone()).unwrap()
+            || frag_source != CString::new(self.debug_sources[1].clone()).unwrap()
+            || geo_source != CString::new(self.debug_sources[2].clone()).unwrap()
+        {
+            if vert_source.to_str().unwrap().contains("#proccessed") {
+                return
+            } else {
+                self.program = Self::create_program().unwrap();
+                self.vert = Self::create_shader(VERTEX_SHADER).unwrap();
+                self.frag = Self::create_shader(FRAGMENT_SHADER).unwrap();
+                self.compile(vert_source, frag_source, geo_source);
+            }
+        }
     }
     pub fn use_shader(&mut self) {
         unsafe { gl::UseProgram(self.program) };
     }
     pub fn clear_shader() {
-        unsafe {gl::UseProgram(0)};
+        unsafe { gl::UseProgram(0) };
     }
 
     fn check_optionals(&mut self) {
@@ -771,7 +812,6 @@ impl Renderable {
                 .set(model, "model")
                 .expect("Couldn't set shader");
         }
-
 
         unsafe {
             gl::BindVertexArray(self.vertex_array);

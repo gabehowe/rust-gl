@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use cgmath::num_traits::Pow;
 use cgmath::{perspective, Deg, Vector3};
 use imgui::{Condition, Ui};
@@ -54,9 +55,9 @@ fn main() {
         grid_verts.0,
         grid_verts.1,
         grid_verts.2,
-        Shader::load_from_path("shaders/mandelbrot").expect("Failed to load shader."),
+        Shader::load_from_path("shaders/pos_shader").expect("Failed to load shader."),
     );
-    // engine.add_renderable(grid);
+    engine.data.add_renderable(grid);
 
     let px_grid = create_grid(2, 2, 2.0, Vector2::new(-1.0, -1.0));
     let mut px = Renderable::new(
@@ -70,71 +71,29 @@ fn main() {
 
     // Renderable::new(vertices, indices, vec![], unsafe {Shader::load_from_path("shaders/orientation_shader")}),
 
-    let mut renderable =
-        unsafe { Renderable::from_obj("objects/chapel.obj", "shaders/base_shader") }
-            .expect("Failed to create renderable.");
-    renderable.uniform_scale(0.1);
-    // renderable.translate(0.0, 10.0, 0.0);
-    let _bounding_box = get_bounding_box(&renderable);
-    engine.add_renderable(renderable);
-    engine.add_renderable(px);
-    let mut val_scale = 1.;
-    while engine.should_keep_running() {
-        engine.update(|imgui: &mut Ui, frametime: f64, data: &mut Data| {
-            // return ();
-            // imgui.show_demo_window(&mut true);
-            /*            imgui
-                            .window("info")
-                            .size([300.0, 300.0], Condition::Always)
-                            .build(|| {
-                                imgui.label_text("Framerate", (1.0 / frametime).to_string());
-                                //imgui.input_float4("Mandelbrot Bounds", &mut mandelbrot_bounds).build();
-                                imgui.slider("x off", -4.0, 4.0, &mut offset[0]);
-                                imgui.slider("y off", -4.0, 4.0, &mut offset[1]);
-                                imgui.slider("mx off", -4.0, 4.0, &mut minor_offset[0]);
-                                imgui.slider("my off", -4.0, 4.0, &mut minor_offset[1]);
-                                imgui.slider("scale", 0.0, 100.0, &mut val_scale);
-                            });
-            */
-            let scale = f32::pow(1.15, val_scale);
-            /*            for i in 0..2 {
-                            data.renderables[i].shader.use_shader();
-                            data.renderables[i]
-                                .shader
-                                .set(
-                                    vec![
-                                        offset[0] - offset[0] / scale
-                                            + mandelbrot_bounds[0] / scale
-                                            + minor_offset[0] / 10.,
-                                        offset[0] - offset[0] / scale
-                                            + mandelbrot_bounds[1] / scale
-                                            + minor_offset[0] / 10.,
-                                        offset[1] - offset[1] / scale
-                                            + mandelbrot_bounds[2] / scale
-                                            + minor_offset[1] / 10.,
-                                        offset[1] - offset[1] / scale
-                                            + mandelbrot_bounds[3] / scale
-                                            + minor_offset[1] / 10.,
-                                    ],
-                                    "bounds",
-                                )
-                                .unwrap_or_else(|_| println!("Couldn't set mandelbrot bounds. "));
-                        }
-            */
-        });
+    // let _bounding_box = get_bounding_box(&renderable);
+    // engine.data.add_renderable(px);
 
-        // let translation = velocity * engine.frametime;
-        //
-        // velocity += acceleration * engine.frametime;
-        //
-        // if engine.data.renderables[1].translation.y < 1.0 {
-        //     velocity.y = 0.0;
-        // }
-        // engine.data.renderables[1].translate(
-        //     translation.x as f32,
-        //     translation.y as f32,
-        //     translation.z as f32,
-        // );
+    let renderable= engine.data.add_renderable(
+        unsafe { Renderable::from_obj("objects/chapel.obj", "shaders/base_shader") }
+            .expect("Failed to create renderable."),
+    );
+    engine.data.get_renderable_mut(renderable).uniform_scale(0.1);
+    engine.data.get_renderable_mut(renderable).translate(20., 0.0, 0.0);
+    while engine.should_keep_running() {
+        let pos = engine.data.camera.pos;
+        engine.update(|imgui: &mut Ui, frametime: f64, data: &mut Data| {
+            imgui
+                .window("info")
+                .size([300.0, 100.0], Condition::Always)
+                .build(|| {
+                    imgui.label_text("framerate", (1.0 / frametime).to_string());
+                    imgui.label_text("pos", format!("{:0.2} {:0.2} {:0.2}", pos.x, pos.y, pos.z))
+                });
+
+        });
+        // engine.data.renderables.get_mut(1).unwrap().rotate(0.0, 0.00, 0.01);
+        engine.data.get_renderable_mut(renderable).rotate(0.0, 0.00, 0.01);
     }
 }
 

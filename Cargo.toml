@@ -14,3 +14,4 @@ obj-rs = "0.7.1"
 imgui-glfw-rs = { path="lib/imgui-glfw-rs-master" }
 imgui-opengl-renderer = { path="lib/rust-imgui-opengl-renderer" }
 uuid = { version = "1.11.0", features = ["v4"] }
+log = "0.4.21"
