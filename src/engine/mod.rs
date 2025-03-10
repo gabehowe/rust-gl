@@ -4,6 +4,7 @@ extern crate glfw;
 use std::error::Error;
 use std::ptr;
 
+use crate::engine::shader::Shader;
 use cgmath::{InnerSpace, Vector3};
 use gl::{
     COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION,
@@ -11,8 +12,8 @@ use gl::{
 };
 use glfw::ffi::*;
 use glfw::{
-    fail_on_errors, Action, Context, CursorMode, Glfw, GlfwReceiver, Key, PWindow, SwapInterval,
-    WindowEvent, WindowHint,
+    fail_on_errors, Action, Context, CursorMode, Glfw, GlfwReceiver, Key, Monitor, PWindow,
+    SwapInterval, WindowEvent, WindowHint, WindowMode,
 };
 use image::{ImageBuffer, Rgba};
 use imgui::*;
@@ -20,12 +21,11 @@ use obj::raw::material::{Material, MtlColor};
 use renderable::Renderable;
 use transformation::Camera;
 use util::debug_log;
-use crate::engine::shader::Shader;
 
 pub mod renderable;
+pub(crate) mod shader;
 pub mod transformation;
 pub mod util;
-pub(crate) mod shader;
 
 const HEIGHT: u32 = 1000;
 const WIDTH: u32 = HEIGHT * 16 / 9;
@@ -49,6 +49,8 @@ impl Data {
         self.camera.update_buffers(); // Only needs to be updated if it changes. Optimization?
                                       // unsafe {renderables[0].shader.set_vec3(Vector3::new(255.0, 0.0, 0.0), "ourColor");}
                                       // unsafe {renderables[1].shader.set_vec3(Vector3::new(0.0, 0.0, 255.0), "ourColor");}
+
+        // self.renderables.get_mut(0).unwrap().render(None);
         for i in &mut *self.renderables {
             i.render(if wireframe {
                 Some(&mut self.wireframe_shader)
@@ -226,7 +228,7 @@ impl Engine {
         F: FnMut(&mut Ui, f64, &mut Data),
     {
         self.frame_index += 1;
-        
+
         self.data.handle_input(&self.window);
         self.data.render(self.event_handler.wireframe);
         // Allow for disabling imgui
@@ -258,6 +260,9 @@ impl Engine {
                     .handle_event(self.event_handler.imgui.as_mut().unwrap(), &event);
             }
             match event {
+                WindowEvent::FramebufferSize(width, height) => unsafe {
+                    gl::Viewport(0, 0, width, height);
+                },
                 WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
                     self.window.set_should_close(true);
                 }
@@ -292,6 +297,38 @@ impl Engine {
                     }
                     println!("Wireframe: {}", self.event_handler.wireframe);
                     self.event_handler.wireframe = !self.event_handler.wireframe;
+                }
+                WindowEvent::Key(Key::F11, _, Action::Press, _) => {
+                    let mut fullscreen = false;
+                    self.window.with_window_mode(|wm| {
+                        if let glfw::WindowMode::FullScreen(_) = wm {
+                            fullscreen = true
+                        }
+                    });
+                    match fullscreen {
+                        false => self.glfw.with_primary_monitor(|g, mut m| {
+                            let monitor = m.unwrap();
+                            let workarea = monitor.get_workarea();
+                            self.window.set_monitor(
+                                glfw::WindowMode::FullScreen(monitor),
+                                0,
+                                0,
+                                workarea.2 as u32,
+                                workarea.3 as u32,
+                                None,
+                            );
+                        }),
+                        true => {
+                            self.window.set_monitor(
+                                glfw::WindowMode::Windowed,
+                                250,
+                                250,
+                                WIDTH,
+                                HEIGHT,
+                                None,
+                            );
+                        }
+                    }
                 }
                 WindowEvent::CursorPos(x, y) => {
                     // println!("{}, {}", x, y);
@@ -346,8 +383,13 @@ fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     use glfw::fail_on_errors;
     let mut glfw = glfw::init(fail_on_errors!()).unwrap();
 
-    let (mut window, events) = glfw
-        .create_window(WIDTH, HEIGHT, "OpenGL", glfw::WindowMode::Windowed)
+    let (mut window, events) = 
+            glfw.create_window(
+                WIDTH,
+                HEIGHT,
+                "Hello this is window",
+                glfw::WindowMode::Windowed
+                )
         .expect("Failed to create GLFW window.");
 
     glfw.window_hint(WindowHint::ContextVersionMajor(4));
