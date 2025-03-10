@@ -1,4 +1,3 @@
-use gl::types::GLenum;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::fs::File;
@@ -13,7 +12,10 @@ pub extern "system" fn debug_log(
     msg: *const gl::types::GLchar,
     _: *mut std::os::raw::c_void,
 ) {
-    unsafe { println!("{}", CStr::from_ptr(msg).to_string_lossy()) }
+    let msg = unsafe {CStr::from_ptr(msg).to_string_lossy()};
+    if !msg.contains("Buffer detailed info:") {
+        println!("GL Debug: {}", msg);
+    }
 }
 
 pub fn load_file(path: String) -> CString {
@@ -29,7 +31,6 @@ pub fn find_gl_error() -> Option<GLFunctionError> {
     let error = unsafe { gl::GetError() };
     if error != gl::NO_ERROR {
         panic!("ah!");
-        Some(GLFunctionError::new(error.to_string()))
     } else {
         None
     }
@@ -45,7 +46,8 @@ impl GLFunctionError {
     }
 }
 impl Default for GLFunctionError {
-    fn default() -> Self { GLFunctionError::new("".to_string())
+    fn default() -> Self {
+        GLFunctionError::new("".to_string())
     }
 }
 impl std::error::Error for GLFunctionError {}

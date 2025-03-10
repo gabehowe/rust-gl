@@ -1,11 +1,9 @@
 extern crate gl;
 extern crate glfw;
 
-use std::cell::RefCell;
 use std::error::Error;
 use std::ptr;
 
-use crate::engine::renderable::Shader;
 use cgmath::{InnerSpace, Vector3};
 use gl::{
     COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION,
@@ -22,16 +20,18 @@ use obj::raw::material::{Material, MtlColor};
 use renderable::Renderable;
 use transformation::Camera;
 use util::debug_log;
+use crate::engine::shader::Shader;
 
 pub mod renderable;
 pub mod transformation;
 pub mod util;
+pub(crate) mod shader;
 
 const HEIGHT: u32 = 1000;
 const WIDTH: u32 = HEIGHT * 16 / 9;
 const MOVESPEED: f32 = 0.025;
 const ROTATIONSPEED: f32 = 0.025;
-const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
+const CLEARCOLOR: (f32, f32, f32, f32) = (1.0, 0.0, 0.0, 1.0);
 
 pub struct Data {
     pub(crate) renderables: Vec<Renderable>,
@@ -57,12 +57,12 @@ impl Data {
             });
         }
     }
-    pub(crate) fn add_renderable(&mut self, mut renderable: Renderable) -> usize {
+    pub(crate) fn add_renderable(&mut self, mut renderable: Renderable) -> Result<usize, ()> {
         unsafe {
-            renderable.shader.bind_matrices();
+            renderable.shader.bind_matrices()?;
         }
         self.renderables.push(renderable);
-        self.renderables.len() - 1
+        Ok(self.renderables.len() - 1)
     }
 
     fn handle_input(&mut self, window: &PWindow) {
@@ -130,6 +130,7 @@ pub(crate) struct Engine {
     pub frametime: f64,
     pub data: Data,
     pub event_handler: EventHandler,
+    pub frame_index: u32,
 }
 
 impl Engine {
@@ -177,6 +178,7 @@ impl Engine {
                 )?),
             },
             event_handler,
+            frame_index: 0,
         })
     }
     pub fn write_to_file(&self, path: &str) {
@@ -223,6 +225,8 @@ impl Engine {
     where
         F: FnMut(&mut Ui, f64, &mut Data),
     {
+        self.frame_index += 1;
+        
         self.data.handle_input(&self.window);
         self.data.render(self.event_handler.wireframe);
         // Allow for disabling imgui
@@ -236,6 +240,14 @@ impl Engine {
         }
 
         self.window.swap_buffers();
+        self.process_glfw_events();
+
+        self.event_handler.current_frame_time = unsafe { glfwGetTime() };
+        self.frametime = self.event_handler.current_frame_time - self.event_handler.last_frame_time;
+        self.event_handler.last_frame_time = self.event_handler.current_frame_time;
+        // println!("Frame rate: {}", frame_rate);
+    }
+    fn process_glfw_events(&mut self) {
         self.glfw.poll_events();
         for (_, event) in glfw::flush_messages(&self.events) {
             if self.event_handler.imgui.is_some() && self.event_handler.show_imgui {
@@ -291,11 +303,6 @@ impl Engine {
                 _ => {}
             }
         }
-
-        self.event_handler.current_frame_time = unsafe { glfwGetTime() };
-        self.frametime = self.event_handler.current_frame_time - self.event_handler.last_frame_time;
-        self.event_handler.last_frame_time = self.event_handler.current_frame_time;
-        // println!("Frame rate: {}", frame_rate);
     }
 }
 
@@ -309,7 +316,6 @@ pub struct EventHandler {
 }
 impl EventHandler {
     fn new(window: &mut PWindow) -> EventHandler {
-        let mut wireframe = false;
         // let mut renderer = imgui_opengl_renderer::Renderer::new(&mut ctx, |s| self.window.get_proc_address(s) as _);
 
         let mut imgui = imgui::Context::create();
@@ -318,12 +324,10 @@ impl EventHandler {
         println!("Window Size: {:?}", window_size);
         imgui.io_mut().display_size = [window_size.0 as f32, window_size.1 as f32];
         EventHandler {
-            wireframe,
-            current_frame_time: 0.0,
             last_frame_time: unsafe { glfwGetTime() },
             imgui: Some(imgui),
             imgui_glfw: Some(imgui_glfw),
-            show_imgui: true,
+            ..Self::raw()
         }
     }
     fn raw() -> Self {
@@ -358,7 +362,7 @@ fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     window.set_cursor_pos_polling(true);
     window.set_mouse_button_polling(true);
     window.set_scroll_polling(true);
-    glfw.set_swap_interval(SwapInterval::Sync(3));
+    glfw.set_swap_interval(SwapInterval::None);
 
     gl::load_with(|s| glfw.get_proc_address_raw(s));
     unsafe {

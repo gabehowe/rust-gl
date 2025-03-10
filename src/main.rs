@@ -1,15 +1,13 @@
-use std::cell::RefCell;
 use cgmath::num_traits::Pow;
-use cgmath::{perspective, Deg, Vector3};
+use cgmath::{perspective, Deg, Vector3, Zero};
 use imgui::{Condition, Ui};
 use noise::Vector2;
+use crate::engine::shader::{SetValue, Shader};
 
-use crate::engine::renderable::{Renderable, SetValue, Shader};
+use crate::engine::renderable::{Renderable};
 use crate::engine::{Data, Engine};
 
 mod engine;
-const FRAME_SECONDS: usize = 60;
-static mut FRAMES: [f32; FRAME_SECONDS * 60] = [0.0; 60 * FRAME_SECONDS];
 
 fn get_bounding_box(ren: &Renderable) -> (Vector3<f32>, Vector3<f32>) {
     let mut min = Vector3::new(0f32, 0f32, 0f32);
@@ -58,42 +56,67 @@ fn main() {
         Shader::load_from_path("shaders/pos_shader").expect("Failed to load shader."),
     );
     engine.data.add_renderable(grid);
-
-    let px_grid = create_grid(2, 2, 2.0, Vector2::new(-1.0, -1.0));
+    let px_grid = (
+        vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 0.1),
+            Vector3::new(0.0, 0.1, 0.0),
+            Vector3::new(0.1, 0.0, 0.0),
+        ],
+        vec![1, 0, 2, 0, 3],
+        vec![Vector3::zero(), Vector3::zero(), Vector3::zero(), Vector3::zero()],
+    );
     let mut px = Renderable::new(
         px_grid.0,
         px_grid.1,
         px_grid.2,
-        Shader::load_from_path("shaders/mandelbrot").expect("Failed to load shader."),
+        Shader::load_from_path("shaders/orientation_shader").expect("Failed to load shader."),
     );
+    px.shader.use_shader();
+    px.shader.set(vec![ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set thing");
+    px.draw_type = gl::LINES;
     px.translate(0.0, 0.0, 0.0);
-    px.rotate(0.5 * std::f32::consts::PI, 0.0, 0.0);
+    engine.data.add_renderable(px);
 
     // Renderable::new(vertices, indices, vec![], unsafe {Shader::load_from_path("shaders/orientation_shader")}),
 
     // let _bounding_box = get_bounding_box(&renderable);
-    // engine.data.add_renderable(px);
 
-    let renderable= engine.data.add_renderable(
-        unsafe { Renderable::from_obj("objects/chapel.obj", "shaders/base_shader") }
-            .expect("Failed to create renderable."),
-    );
-    engine.data.get_renderable_mut(renderable).uniform_scale(0.1);
-    engine.data.get_renderable_mut(renderable).translate(20., 0.0, 0.0);
+    let renderable = engine
+        .data
+        .add_renderable(
+            unsafe { Renderable::from_obj("objects/chapel.obj", "shaders/base_shader") }
+                .expect("Failed to create renderable."),
+        )
+        .unwrap_or_default();
+    engine
+        .data
+        .get_renderable_mut(renderable)
+        .uniform_scale(0.1);
+    engine
+        .data
+        .get_renderable_mut(renderable)
+        .translate(20., 0.0, 0.0);
+    let mut staggered_frametime = 0.0;
     while engine.should_keep_running() {
         let pos = engine.data.camera.pos;
+        if (engine.frame_index as f64 / engine.frametime) as u64 % 10 == 0 {
+            staggered_frametime = engine.frametime;
+        }
         engine.update(|imgui: &mut Ui, frametime: f64, data: &mut Data| {
             imgui
                 .window("info")
                 .size([300.0, 100.0], Condition::Always)
                 .build(|| {
-                    imgui.label_text("framerate", (1.0 / frametime).to_string());
+                    imgui.label_text("framerate", format!("{:0.1} {:0.4}", 1.0/staggered_frametime, staggered_frametime * 1000.0));
                     imgui.label_text("pos", format!("{:0.2} {:0.2} {:0.2}", pos.x, pos.y, pos.z))
                 });
-
         });
         // engine.data.renderables.get_mut(1).unwrap().rotate(0.0, 0.00, 0.01);
-        engine.data.get_renderable_mut(renderable).rotate(0.0, 0.00, 0.01);
+        engine
+            .data
+            .get_renderable_mut(renderable)
+            .rotate(0.0, 0.00, 0.1 * engine.frametime as f32);
     }
 }
 
