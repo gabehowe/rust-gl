@@ -2,6 +2,7 @@
 name = "rust-gl"
 version = "0.1.0"
 edition = "2021"
+
 [profile.release]
 debug=true
 strip=false
@@ -15,10 +16,13 @@ cgmath = "0.18.0"
 gl = "0.14.0"
 glfw = "0.56.0"
 image = "0.25.1"
-imgui = "0.12.0"
+imgui="0.12.0"
 noise = "0.9.0"
 obj-rs = "0.7.1"
-imgui-glfw-rs = { path="lib/imgui-glfw-rs-master" }
 imgui-opengl-renderer = { path="lib/rust-imgui-opengl-renderer" }
+imgui-glfw-rs = { path="lib/imgui-glfw-rs" }
 uuid = { version = "1.11.0", features = ["v4"] }
 log = "0.4.21"
+gltf = { version = "1.4.1", features = ["KHR_materials_specular"] }
+itertools = "0.12.1"
+

@@ -1,10 +1,11 @@
+use crate::engine::shader::SetValue;
 use cgmath::num_traits::Pow;
 use cgmath::{perspective, Deg, Vector3, Zero};
 use imgui::{Condition, Ui};
 use noise::Vector2;
-use crate::engine::shader::{SetValue, Shader};
 
-use crate::engine::renderable::{Renderable};
+use crate::engine::renderable::{Mesh, Renderable};
+use crate::engine::transformation::Transformable;
 use crate::engine::{Data, Engine};
 
 mod engine;
@@ -49,13 +50,15 @@ fn main() {
         Vector2::new(-size / 2., -size / 2.),
     );
 
+    let mesh = Mesh::from_gltf("objects/lplychapel.glb","shaders/base_shader", &mut engine.data.shader_manager).expect("couldn't load mesh");
+    engine.data.renderables.push(Box::from(mesh));
     let grid = Renderable::new(
         grid_verts.0,
         grid_verts.1,
         grid_verts.2,
-        Shader::load_from_path("shaders/pos_shader").expect("Failed to load shader."),
+        engine.data.shader_manager.load_from_path("shaders/pos_shader").expect("Failed to load shader."),
     );
-    engine.data.add_renderable(grid);
+    engine.data.add_renderable(Box::from(grid));
     let px_grid = (
         vec![
             Vector3::new(0.0, 0.0, 0.0),
@@ -66,29 +69,25 @@ fn main() {
         vec![1, 0, 2, 0, 3],
         vec![Vector3::zero(), Vector3::zero(), Vector3::zero(), Vector3::zero()],
     );
-    let mut px = Renderable::new(
+    let mut debug_axes = Renderable::new(
         px_grid.0,
         px_grid.1,
         px_grid.2,
-        Shader::load_from_path("shaders/orientation_shader").expect("Failed to load shader."),
+        engine.data.shader_manager.load_from_path("shaders/orientation_shader").expect("Failed to load shader."),
     );
-    px.shader.use_shader();
-    px.shader.set(vec![ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set thing");
-    px.draw_type = gl::LINES;
-    px.translate(0.0, 0.0, 0.0);
-    engine.data.add_renderable(px);
+    engine.data.shader_manager.get_mut(debug_axes.shader).unwrap().set(vec![ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set thing");
+    debug_axes.draw_type = gl::LINES;
+    debug_axes.translate(0.0, 0.0, 0.0);
+    engine.data.add_renderable(Box::from(debug_axes));
 
     // Renderable::new(vertices, indices, vec![], unsafe {Shader::load_from_path("shaders/orientation_shader")}),
 
     // let _bounding_box = get_bounding_box(&renderable);
 
+
     let renderable = engine
         .data
-        .add_renderable(
-            unsafe { Renderable::from_obj("objects/chapel.obj", "shaders/base_shader") }
-                .expect("Failed to create renderable."),
-        )
-        .unwrap_or_default();
+        .add_renderable_from_obj("objects/chapel.obj", "shaders/base_shader" ).expect("Couldn't create object.");
     engine
         .data
         .get_renderable_mut(renderable)
@@ -98,9 +97,11 @@ fn main() {
         .get_renderable_mut(renderable)
         .translate(20., 0.0, 0.0);
     let mut staggered_frametime = 0.0;
+    let mut last_update = 0.0;
     while engine.should_keep_running() {
         let pos = engine.data.camera.pos;
-        if (engine.frame_index as f64 / engine.frametime) as u64 % 10 == 0 {
+        if (engine.event_handler.last_frame_time - last_update > 1.0) {
+            last_update = engine.event_handler.last_frame_time;
             staggered_frametime = engine.frametime;
         }
         engine.update(|imgui: &mut Ui, frametime: f64, data: &mut Data| {
@@ -109,7 +110,8 @@ fn main() {
                 .size([300.0, 100.0], Condition::Always)
                 .build(|| {
                     imgui.label_text("framerate", format!("{:0.1} {:0.4}", 1.0/staggered_frametime, staggered_frametime * 1000.0));
-                    imgui.label_text("pos", format!("{:0.2} {:0.2} {:0.2}", pos.x, pos.y, pos.z))
+                    imgui.label_text("pos", format!("{:0.2} {:0.2} {:0.2}", pos.x, pos.y, pos.z));
+                    imgui.label_text("objs", format!("sh {} | objs {}", data.shader_manager.count(), data.renderables.len()))
                 });
         });
         // engine.data.renderables.get_mut(1).unwrap().rotate(0.0, 0.00, 0.01);

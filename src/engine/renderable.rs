@@ -6,21 +6,64 @@ use std::mem::size_of;
 use std::path::Path;
 use std::ptr::null;
 
-use crate::engine::shader::{FromVertex, SetValue, Shader};
-use crate::engine::transformation::Transformation;
+use crate::engine::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager};
+use crate::engine::transformation::{Transformable, Transformation};
 use cgmath::{Euler, Matrix, Matrix4, One, Rad, Vector2, Vector3, Zero};
 use gl::types::{GLenum, GLfloat, GLsizei, GLuint};
-use gl::{
-    ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, STATIC_DRAW
-    , TRIANGLES, UNSIGNED_INT,
-};
+use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, STATIC_DRAW, TRIANGLES, UNSIGNED_INT};
+use itertools::Itertools;
 use obj::raw::{parse_mtl, parse_obj};
 use obj::{FromRawVertex, TexturedVertex};
+
+pub trait Render: Transformable {
+    fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>);
+}
+
+impl Render for Renderable {
+    fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>) {
+        let model = self.build_model();
+        let shader = shader_manager
+            .get_mut(shader_override.unwrap_or(self.shader))
+            .expect("Couldn't unwrap shader");
+        shader.use_shader();
+        shader.update().expect("Shader failed to update.");
+        shader.set(model, "model").expect("Couldn't set shader");
+
+        unsafe {
+            gl::BindVertexArray(self.vertex_array);
+
+            gl::DrawElements(
+                self.draw_type,
+                (self.indices.len() * size_of::<GLuint>()) as GLsizei,
+                UNSIGNED_INT,
+                null(),
+            );
+            gl::BindVertexArray(0); // Cleanup
+        }
+        Shader::clear_shader();
+    }
+}
+impl Transformable for Renderable {
+    fn scale(&mut self, x: f32, y: f32, z: f32) {
+        self.scale.x *= x;
+        self.scale.y *= y;
+        self.scale.z *= z;
+    }
+    fn uniform_scale(&mut self, scale: f32) {
+        self.scale *= scale;
+    }
+    fn rotate(&mut self, x: f32, y: f32, z: f32) {
+        self.rotation += Vector3::new(x, y, z);
+    }
+    fn translate(&mut self, x: f32, y: f32, z: f32) {
+        self.translation += Vector3::new(x, y, z)
+    }
+}
 
 pub struct Renderable {
     pub(crate) vertices: Vec<Vector3<c_float>>,
     indices: Vec<c_uint>,
-    pub shader: Shader,
+    pub shader: usize,
     vertex_array: GLuint,
     vertex_buffer: GLuint,
     element_buffer: GLuint,
@@ -29,7 +72,7 @@ pub struct Renderable {
     pub scale: Vector3<f32>,
     normals: Vec<Vector3<f32>>,
     tex_coords: Vec<Vector2<f32>>,
-    pub draw_type: GLenum
+    pub draw_type: GLenum,
 }
 
 impl Renderable {
@@ -38,7 +81,7 @@ impl Renderable {
         indices: Vec<u32>,
         normals: Vec<Vector3<f32>>,
         tex_coords: Vec<Vector2<f32>>,
-        shader: Shader,
+        shader: usize,
     ) -> Renderable {
         Renderable {
             tex_coords,
@@ -51,7 +94,7 @@ impl Renderable {
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
         normals: Vec<Vector3<f32>>,
-        shader: Shader,
+        shader: usize,
     ) -> Renderable {
         let mut ret = Renderable {
             vertices,
@@ -65,7 +108,7 @@ impl Renderable {
             scale: Vector3::new(1., 1., 1.),
             normals,
             tex_coords: Vec::new(),
-            draw_type: TRIANGLES
+            draw_type: TRIANGLES,
         };
         unsafe {
             ret.gen_buffers();
@@ -172,7 +215,11 @@ impl Renderable {
     unsafe fn enable_texture(&mut self) {
         // self.shader.setup_textures();
     }
-    pub unsafe fn from_obj(path: &str, shaderpath: &str) -> Result<Renderable, Box<dyn Error>> {
+    pub fn from_obj(
+        path: &str,
+        shaderpath: &str,
+        manager: &mut ShaderManager,
+    ) -> Result<Renderable, Box<dyn Error>> {
         let path_dir = Path::new(path).parent().expect("Jimbo jones the second");
         let input = BufReader::new(File::open(path).expect("Jimbo jones again!"));
         let obj = parse_obj(input).expect("Jimb jones the third");
@@ -197,15 +244,10 @@ impl Renderable {
                 })?,
         ))
         .map_err(|_| "Couldn't parse mtl!")?;
-        let new_shader = Shader::load_from_mtl(
-            raw_mtl
-                .materials
-                .get("Material.001")
-                .expect("Jimbo jones the seventh")
-                .clone(),
-            path_dir.to_str().unwrap(),
-            shaderpath,
-        );
+        let mat =
+            NarrowingMaterial::from_obj_mtl(raw_mtl.materials.get("Material.001").unwrap().clone());
+        let new_shader = mat.to_shader(shaderpath)?;
+
         // let new_shader = Shader::load_from_path("shaders/comp_base_shader");
         Ok(Renderable::new_with_tex(
             vertices.iter().map(Vector3::from_vertex).collect(),
@@ -215,7 +257,7 @@ impl Renderable {
                 .iter()
                 .map(|x: &TexturedVertex| Vector2::new(x.texture[0], x.texture[1]))
                 .collect(),
-            new_shader?,
+            manager.register(new_shader),
         ))
         // let mut ret = Renderable::new(vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), indices, vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(),  new_shader);
     }
@@ -232,49 +274,73 @@ impl Renderable {
         // println!("{:?}", model);
         model
     }
-    pub fn render(&mut self, shader_override: Option<&mut Box<Shader>>) {
-        let model = self.build_model();
-        if shader_override.is_some() {
-            let shader: &mut Box<Shader> = shader_override.unwrap();
-            shader.use_shader();
-            shader.update().expect("Shader failed to update.");
-            shader
-                .set(model, "model")
-                .expect("Couldn't update shader model.");
-        } else {
-            self.shader.use_shader();
-            self.shader.update().expect("Shader failed to update.");
-            self.shader
-                .set(model, "model")
-                .expect("Couldn't set shader");
+}
+impl Render for Mesh {
+    fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].render(shader_manager, shader_override);
         }
-
-        unsafe {
-            gl::BindVertexArray(self.vertex_array);
-
-            gl::DrawElements(
-                self.draw_type,
-                (self.indices.len() * size_of::<GLuint>()) as GLsizei,
-                UNSIGNED_INT,
-                null(),
-            );
-            gl::BindVertexArray(0); // Cleanup
+    }
+}
+impl Transformable for Mesh {
+    fn scale(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].scale(x, y, z);
         }
-        Shader::clear_shader();
     }
+    fn uniform_scale(&mut self, scale: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].uniform_scale(scale);
+        }
+    }
+    fn rotate(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].rotate(x, y, z);
+        }
+    }
+    fn translate(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].translate(x, y, z);
+        }
+    }
+}
+pub struct Mesh {
+    renderables: Vec<Renderable>,
+}
+impl Mesh {
+    pub fn from_gltf(
+        path: &str,
+        shaderpath: &str,
+        shader_manager: &mut ShaderManager,
+    ) -> Result<Mesh, Box<dyn Error>> {
+        let (document, buffers, images) = gltf::import(path)?;
+        let mut renderables: Vec<Renderable> = Vec::new();
+        let mut materials: Vec<usize> = Vec::new();
+        for i in document.materials() {
+            let mat = NarrowingMaterial::from_gltf_mtl(i, images.clone())?;
+            materials.push(shader_manager.register(mat.to_shader(shaderpath)?));
+        }
+        for mesh in document.meshes() {
+            for primitive in mesh.primitives() {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                let vertices: Vec<Vector3<c_float>> =
+                    reader.read_positions().unwrap().map_into().collect();
+                let indices: Vec<c_uint> = reader.read_indices().unwrap().into_u32().collect();
+                let tex_coords: Vec<Vector2<c_float>> = reader
+                    .read_tex_coords(0)
+                    .unwrap()
+                    .into_f32()
+                    .map_into()
+                    .collect(); //TODO: add multiple sets
+                let normals: Vec<Vector3<c_float>> =
+                    reader.read_normals().unwrap().map_into().collect();
+                let material = materials[primitive.material().index().unwrap()];
 
-    pub fn scale(&mut self, x: f32, y: f32, z: f32) {
-        self.scale.x *= x;
-        self.scale.y *= y;
-        self.scale.z *= z;
-    }
-    pub fn uniform_scale(&mut self, scale: f32) {
-        self.scale *= scale;
-    }
-    pub fn rotate(&mut self, x: f32, y: f32, z: f32) {
-        self.rotation += Vector3::new(x, y, z);
-    }
-    pub fn translate(&mut self, x: f32, y: f32, z: f32) {
-        self.translation += Vector3::new(x, y, z)
+                renderables.push(Renderable::new_with_tex(
+                    vertices, indices, normals, tex_coords, material,
+                ));
+            }
+        }
+        Ok(Mesh { renderables })
     }
 }

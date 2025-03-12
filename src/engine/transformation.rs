@@ -13,6 +13,12 @@ pub trait Transformation {
     fn rotate(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
     fn translate(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
 }
+pub trait Transformable {
+    fn scale(&mut self, x: f32, y: f32, z: f32);
+    fn uniform_scale(&mut self, scale: f32);
+    fn rotate(&mut self, x: f32, y: f32, z: f32);
+    fn translate(&mut self, x: f32, y: f32, z: f32);
+}
 
 impl Transformation for Matrix4<f32> {
     fn scale(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32> {
@@ -101,16 +107,13 @@ impl Camera {
                 self.pos.as_ptr().cast(),
             );
             offset += 16;
-            gl::BindBuffer(UNIFORM_BUFFER, self.uniform_buffer);
             gl::BufferSubData(
                 UNIFORM_BUFFER,
                 offset,
                 size_of::<Matrix4<f32>>() as GLsizeiptr,
                 self.get_view_matrix().as_ptr().cast(),
             );
-            gl::BindBuffer(UNIFORM_BUFFER, 0);
             offset += size_of::<Matrix4<f32>>() as GLsizeiptr;
-            gl::BindBuffer(UNIFORM_BUFFER, self.uniform_buffer);
             gl::BufferSubData(
                 UNIFORM_BUFFER,
                 offset,

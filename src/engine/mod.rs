@@ -4,7 +4,9 @@ extern crate glfw;
 use std::error::Error;
 use std::ptr;
 
-use crate::engine::shader::Shader;
+use crate::engine::renderable::Render;
+use crate::engine::shader::{MaybeColorTexture, NarrowingMaterial, ShaderManager};
+use crate::engine::transformation::Transformation;
 use cgmath::{InnerSpace, Vector3};
 use gl::{
     COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION,
@@ -12,12 +14,11 @@ use gl::{
 };
 use glfw::ffi::*;
 use glfw::{
-    fail_on_errors, Action, Context, CursorMode, Glfw, GlfwReceiver, Key, Monitor, PWindow,
-    SwapInterval, WindowEvent, WindowHint, WindowMode,
+    fail_on_errors, Action, Context, CursorMode, Glfw, GlfwReceiver, Key, PWindow,
+    SwapInterval, WindowEvent, WindowHint,
 };
 use image::{ImageBuffer, Rgba};
 use imgui::*;
-use obj::raw::material::{Material, MtlColor};
 use renderable::Renderable;
 use transformation::Camera;
 use util::debug_log;
@@ -29,17 +30,21 @@ pub mod util;
 
 const HEIGHT: u32 = 1000;
 const WIDTH: u32 = HEIGHT * 16 / 9;
-const MOVESPEED: f32 = 0.025;
-const ROTATIONSPEED: f32 = 0.025;
-const CLEARCOLOR: (f32, f32, f32, f32) = (1.0, 0.0, 0.0, 1.0);
+const MOVESPEED: f32 = 2.5;
+const ROTATIONSPEED: f32 = 2.5;
+const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
 
 pub struct Data {
-    pub(crate) renderables: Vec<Renderable>,
+    pub(crate) renderables: Vec<Box<dyn Render>>,
     pub camera: Camera,
-    wireframe_shader: Box<Shader>,
+    wireframe_shader: usize,
+    pub(crate) shader_manager: ShaderManager,
 }
 
 impl Data {
+    fn update(&mut self) {
+        self.shader_manager.update();
+    }
     fn render(&mut self, wireframe: bool) {
         // Safety: We know that the key is a valid key because we are using the glfw::Key enum.
         unsafe {
@@ -51,24 +56,27 @@ impl Data {
                                       // unsafe {renderables[1].shader.set_vec3(Vector3::new(0.0, 0.0, 255.0), "ourColor");}
 
         // self.renderables.get_mut(0).unwrap().render(None);
-        for i in &mut *self.renderables {
-            i.render(if wireframe {
-                Some(&mut self.wireframe_shader)
+        for i in self.renderables.iter_mut() {
+            i.render(&mut self.shader_manager, if wireframe {
+                Some(self.wireframe_shader)
             } else {
                 None
             });
         }
+
     }
-    pub(crate) fn add_renderable(&mut self, mut renderable: Renderable) -> Result<usize, ()> {
-        unsafe {
-            renderable.shader.bind_matrices()?;
-        }
-        self.renderables.push(renderable);
+    pub(crate) fn add_renderable(&mut self, mut renderable: Box<dyn Render>) -> Result<usize, Box<dyn Error>> {
+        self.renderables.push(Box::from(renderable));
         Ok(self.renderables.len() - 1)
     }
+    pub(crate) fn add_renderable_from_obj(&mut self, path: &str, shaderpath: &str) -> Result<usize, Box<dyn Error>> {
+        let renderable = Renderable::from_obj(path, shaderpath, &mut self.shader_manager)?;
+        self.add_renderable(Box::from(renderable))
+    }
 
-    fn handle_input(&mut self, window: &PWindow) {
-        let mut speed = MOVESPEED;
+    fn handle_input(&mut self, window: &PWindow, frametime: f64) {
+        let mut speed = MOVESPEED * frametime as f32;
+        let mut rot_speed = ROTATIONSPEED * frametime as f32;
         if window.get_key(Key::LeftShift) == Action::Press {
             speed *= 3.0;
         }
@@ -104,23 +112,23 @@ impl Data {
         }
 
         if window.get_key(Key::Left) == Action::Press {
-            self.camera.yaw -= ROTATIONSPEED;
+            self.camera.yaw -= rot_speed;
         }
         if window.get_key(Key::Right) == Action::Press {
-            self.camera.yaw += ROTATIONSPEED;
+            self.camera.yaw += rot_speed;
         }
         if window.get_key(Key::Up) == Action::Press {
-            self.camera.pitch += ROTATIONSPEED;
+            self.camera.pitch += rot_speed;
         }
         if window.get_key(Key::Down) == Action::Press {
-            self.camera.pitch -= ROTATIONSPEED;
+            self.camera.pitch -= rot_speed;
         }
     }
 
-    pub fn get_renderable(&self, index: usize) -> &Renderable {
+    pub fn get_renderable(&self, index: usize) -> &Box<dyn Render> {
         &self.renderables[index]
     }
-    pub fn get_renderable_mut(&mut self, index: usize) -> &mut Renderable {
+    pub fn get_renderable_mut(&mut self, index: usize) -> &mut Box<dyn Render> {
         &mut self.renderables[index]
     }
 }
@@ -148,36 +156,29 @@ impl Engine {
         if imgui {
             event_handler = EventHandler::new(&mut window);
         }
-
+        let mut shader_manager = ShaderManager::new();
+        let mat = NarrowingMaterial {
+            diffuse: Some(MaybeColorTexture::RGBA([0.5, 0.5, 0.5, 1.0])),
+            emissive: None,
+            specular: None,
+            metallic: None,
+            roughness: None,
+            ambient_scaling: None,
+            normal: None,
+        };
+        let wireframe_id = shader_manager.register(mat.to_shader(
+            "shaders/base_shader")
+        ?);
         Ok(Engine {
             glfw,
             window,
             events,
             frametime: 0.0,
             data: Data {
-                renderables: vec![],
+                renderables: Vec::new(),
                 camera,
-                wireframe_shader: Box::from(Shader::load_from_mtl(
-                    Material {
-                        ambient: Some(MtlColor::Rgb(0.7, 0.3, 0.0)),
-                        diffuse: Some(MtlColor::Rgb(0.0, 0.0, 0.0)),
-                        specular: Some(MtlColor::Rgb(0.0, 0.0, 0.0)),
-                        emissive: Some(MtlColor::Rgb(0.0, 0.0, 0.0)),
-                        transmission_filter: None,
-                        illumination_model: None,
-                        dissolve: None,
-                        specular_exponent: Some(0.0),
-                        optical_density: Some(0.0),
-                        ambient_map: None,
-                        diffuse_map: None,
-                        specular_map: None,
-                        emissive_map: None,
-                        dissolve_map: None,
-                        bump_map: None,
-                    },
-                    "objects",
-                    "shaders/base_shader",
-                )?),
+                shader_manager,
+                wireframe_shader: wireframe_id,
             },
             event_handler,
             frame_index: 0,
@@ -229,7 +230,7 @@ impl Engine {
     {
         self.frame_index += 1;
 
-        self.data.handle_input(&self.window);
+        self.data.handle_input(&self.window, self.frametime);
         self.data.render(self.event_handler.wireframe);
         // Allow for disabling imgui
         if self.event_handler.imgui.is_some() && self.event_handler.show_imgui {
@@ -242,11 +243,17 @@ impl Engine {
         }
 
         self.window.swap_buffers();
+        unsafe {gl::Flush();}
         self.process_glfw_events();
 
         self.event_handler.current_frame_time = unsafe { glfwGetTime() };
         self.frametime = self.event_handler.current_frame_time - self.event_handler.last_frame_time;
         self.event_handler.last_frame_time = self.event_handler.current_frame_time;
+        if self.event_handler.current_frame_time - self.event_handler.last_tick > 1.0 {
+            self.event_handler.last_tick = self.event_handler.current_frame_time;
+            self.data.update();
+        }
+        // let frame_rate = 1.0 / self.frametime;
         // println!("Frame rate: {}", frame_rate);
     }
     fn process_glfw_events(&mut self) {
@@ -346,10 +353,11 @@ impl Engine {
 pub struct EventHandler {
     wireframe: bool,
     current_frame_time: f64,
-    last_frame_time: f64,
+    pub last_frame_time: f64,
     imgui: Option<imgui::Context>,
     imgui_glfw: Option<imgui_glfw_rs::ImguiGLFW>,
     show_imgui: bool,
+    last_tick: f64,
 }
 impl EventHandler {
     fn new(window: &mut PWindow) -> EventHandler {
@@ -375,6 +383,7 @@ impl EventHandler {
             imgui: None,
             imgui_glfw: None,
             show_imgui: true,
+            last_tick: 0.0,
         }
     }
 }
@@ -383,7 +392,7 @@ fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     use glfw::fail_on_errors;
     let mut glfw = glfw::init(fail_on_errors!()).unwrap();
 
-    let (mut window, events) = 
+    let (mut window, events) =
             glfw.create_window(
                 WIDTH,
                 HEIGHT,
@@ -404,7 +413,7 @@ fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     window.set_cursor_pos_polling(true);
     window.set_mouse_button_polling(true);
     window.set_scroll_polling(true);
-    glfw.set_swap_interval(SwapInterval::None);
+    glfw.set_swap_interval(SwapInterval::Sync(0));
 
     gl::load_with(|s| glfw.get_proc_address_raw(s));
     unsafe {

@@ -1,5 +1,5 @@
-#proccessed
 #version 460 core
+//processed
 //T: LOCATIONS
 
 //T: STD140
@@ -7,7 +7,6 @@
 //T: UNIFORMS
 
 //T: OUT
-
 void main()
 {
     //T: PASSTHROUGHS

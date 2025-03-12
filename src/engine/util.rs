@@ -27,12 +27,12 @@ pub fn load_file(path: String) -> CString {
     new_contents
 }
 /// These need to be disabled for performance, apparently.
-pub fn find_gl_error() -> Option<GLFunctionError> {
+pub fn find_gl_error() -> Result<(), GLFunctionError> {
     let error = unsafe { gl::GetError() };
     if error != gl::NO_ERROR {
-        panic!("ah!");
+        Err(GLFunctionError::new(error.to_string()))
     } else {
-        None
+        Ok(())
     }
 }
 
