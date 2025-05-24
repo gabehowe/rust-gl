@@ -5,7 +5,7 @@ use cgmath::{perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, Po
 use gl::types::{GLsizeiptr, GLuint};
 use gl::{STATIC_DRAW, UNIFORM_BUFFER};
 use imgui::sys::cty::c_double;
-use crate::engine::util::find_gl_error;
+use crate::util::find_gl_error;
 
 pub trait Transformation {
     fn scale(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
@@ -38,7 +38,7 @@ impl Transformation for Matrix4<f32> {
 pub struct Camera {
     pub pos: Vector3<f32>,
     pub rot: Vector2<f32>,
-    projection: Matrix4<f32>,
+    pub projection: Matrix4<f32>,
     uniform_buffer: GLuint,
     last_mouse: (f64, f64),
     pub(crate) front: Vector3<f32>,

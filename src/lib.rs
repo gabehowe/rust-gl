@@ -4,9 +4,9 @@ extern crate glfw;
 use std::error::Error;
 use std::ptr;
 
-use crate::engine::renderable::Render;
-use crate::engine::shader::{MaybeColorTexture, NarrowingMaterial, ShaderManager};
-use crate::engine::transformation::Transformation;
+use renderable::Render;
+use shader::{MaybeColorTexture, NarrowingMaterial, Shader, ShaderManager};
+use transformation::Transformation;
 use cgmath::{InnerSpace, Vector3};
 use gl::{
     COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION,
@@ -24,7 +24,7 @@ use transformation::Camera;
 use util::debug_log;
 
 pub mod renderable;
-pub(crate) mod shader;
+pub mod shader;
 pub mod transformation;
 pub mod util;
 
@@ -32,13 +32,14 @@ const HEIGHT: u32 = 1000;
 const WIDTH: u32 = HEIGHT * 16 / 9;
 const MOVESPEED: f32 = 2.5;
 const ROTATIONSPEED: f32 = 2.5;
-const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
+pub(crate) const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
 
 pub struct Data {
-    pub(crate) renderables: Vec<Box<dyn Render>>,
+    pub renderables: Vec<Box<dyn Render>>,
     pub camera: Camera,
     wireframe_shader: usize,
-    pub(crate) shader_manager: ShaderManager,
+    pub shader_manager: ShaderManager,
+    pub frame_buffer_texture: Option<(u32, u32)>,
 }
 
 impl Data {
@@ -65,11 +66,11 @@ impl Data {
         }
 
     }
-    pub(crate) fn add_renderable(&mut self, mut renderable: Box<dyn Render>) -> Result<usize, Box<dyn Error>> {
+    pub fn add_renderable(&mut self, mut renderable: Box<dyn Render>) -> Result<usize, Box<dyn Error>> {
         self.renderables.push(Box::from(renderable));
         Ok(self.renderables.len() - 1)
     }
-    pub(crate) fn add_renderable_from_obj(&mut self, path: &str, shaderpath: &str) -> Result<usize, Box<dyn Error>> {
+    pub fn add_renderable_from_obj(&mut self, path: &str, shaderpath: &str) -> Result<usize, Box<dyn Error>> {
         let renderable = Renderable::from_obj(path, shaderpath, &mut self.shader_manager)?;
         self.add_renderable(Box::from(renderable))
     }
@@ -131,9 +132,37 @@ impl Data {
     pub fn get_renderable_mut(&mut self, index: usize) -> &mut Box<dyn Render> {
         &mut self.renderables[index]
     }
+    pub fn create_framebuffer_texture(&mut self) {
+        let mut buff = 0; 
+        unsafe {
+            gl::GenFramebuffers(1, &mut buff);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, buff);
+        }
+        let mut texture = 0;
+        unsafe {
+            gl::GenTextures(1, &mut texture);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGB as i32,
+                WIDTH as i32 * 3,
+                HEIGHT as i32 * 3,
+                0,
+                gl::RGB,
+                gl::UNSIGNED_BYTE,
+                ptr::null(),
+            );
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, texture, 0);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+        }
+        self.frame_buffer_texture = Some((buff, texture));
+    }
 }
 
-pub(crate) struct Engine {
+pub struct Engine {
     glfw: Glfw,
     window: PWindow,
     events: GlfwReceiver<(f64, WindowEvent)>,
@@ -167,7 +196,7 @@ impl Engine {
             normal: None,
         };
         let wireframe_id = shader_manager.register(mat.to_shader(
-            "shaders/base_shader")
+            include_str!("../shaders/base_shader.vert").to_string(), include_str!("../shaders/base_shader.frag").to_string())
         ?);
         Ok(Engine {
             glfw,
@@ -179,6 +208,7 @@ impl Engine {
                 camera,
                 shader_manager,
                 wireframe_shader: wireframe_id,
+                frame_buffer_texture: None,
             },
             event_handler,
             frame_index: 0,
@@ -211,7 +241,7 @@ impl Engine {
         let mut camera = Camera::new();
         unsafe {
             camera.initialize_buffers();
-            gl::CullFace(gl::BACK);
+            // gl::CullFace(gl::BACK);
             gl::Enable(gl::TEXTURE_2D);
             gl::LineWidth(0.1);
             gl::Enable(gl::BLEND);
@@ -220,11 +250,11 @@ impl Engine {
         camera
     }
 
-    pub(crate) fn should_keep_running(&self) -> bool {
+    pub fn should_keep_running(&self) -> bool {
         !self.window.should_close()
     }
 
-    pub(crate) fn update<F>(&mut self, mut imgui_callback: F)
+    pub fn update<F>(&mut self, mut imgui_callback: F)
     where
         F: FnMut(&mut Ui, f64, &mut Data),
     {
@@ -413,7 +443,7 @@ fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     window.set_cursor_pos_polling(true);
     window.set_mouse_button_polling(true);
     window.set_scroll_polling(true);
-    glfw.set_swap_interval(SwapInterval::Sync(0));
+    glfw.set_swap_interval(SwapInterval::Sync(1));
 
     gl::load_with(|s| glfw.get_proc_address_raw(s));
     unsafe {

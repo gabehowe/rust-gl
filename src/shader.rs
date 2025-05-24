@@ -1,4 +1,4 @@
-use crate::engine::util::{find_gl_error, load_file, GLFunctionError};
+use crate::util::{find_gl_error, load_file, GLFunctionError};
 use cgmath::{Array, Matrix, Matrix2, Matrix3, Matrix4, Vector3, Vector4};
 use gl::types::{GLchar, GLenum, GLint, GLsizei, GLsizeiptr, GLuint};
 use gl::{
@@ -6,7 +6,7 @@ use gl::{
     UNIFORM_BUFFER, VERTEX_SHADER,
 };
 use glfw::ffi::glfwGetTime;
-use image::open;
+use image::{load_from_memory, open, DynamicImage, EncodableLayout};
 use obj::raw::material::{Material, MtlColor};
 use obj::{TexturedVertex, Vertex};
 use std::collections::hash_map::{Iter, IterMut};
@@ -14,8 +14,9 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::ops::AddAssign;
-use std::os::raw::c_void;
+use std::os::raw::{c_char, c_void};
 use std::path::Path;
+use std::ptr;
 use std::ptr::null;
 
 pub trait FromVertex<T> {
@@ -78,7 +79,7 @@ impl ShaderManager {
         ret
     }
     pub fn update(&mut self) {
-        let ambient: Vector4<f32> = Vector4::new(0.0, 0.0, 0.0,1.0);
+        let ambient: Vector4<f32> = Vector4::new(0.0, 0.0, 0.0, 1.0);
         unsafe {
             gl::BindBuffer(UNIFORM_BUFFER, self.world_buffer);
             gl::BufferSubData(
@@ -89,7 +90,9 @@ impl ShaderManager {
             );
             gl::BindBuffer(UNIFORM_BUFFER, 0);
         }
-        self.iter_mut().for_each(|(_, shader)| {shader.try_runtime_recompile();})
+        self.iter_mut().for_each(|(_, shader)| {
+            shader.try_runtime_recompile();
+        })
     }
     pub fn register(&mut self, shader: Shader) -> usize {
         let id = self.shaders.len();
@@ -117,10 +120,10 @@ impl ShaderManager {
 }
 // A struct to build shaders depending on the options provided in the material.
 pub struct Shader {
-    path: String,
+    path: Option<String>,
     geo: u32,
     optionals: i32,
-    textures: HashMap<String, u32>,
+    pub textures: HashMap<String, u32>,
     vector_values: HashMap<String, Vec<f32>>,
     values: HashMap<String, f32>,
     debug_sources: Vec<CString>,
@@ -157,7 +160,7 @@ impl Shader {
             geo_source = load_file(geo_string);
         }
         let mut ret = Shader {
-            path: path.to_owned(),
+            path: Some(path.to_owned()),
             geo: 0,
             optionals: 0,
             textures: HashMap::new(),
@@ -173,6 +176,7 @@ impl Shader {
             cache: Default::default(),
         };
         ret.program = Some(ret.compile(vert_source, frag_source, geo_source)?);
+        ret.check_optionals();
         Ok(ret)
     }
     #[deprecated = "Use NarrowingMaterial instead."]
@@ -182,7 +186,7 @@ impl Shader {
         base_path: &str,
     ) -> Result<Shader, Box<dyn Error>> {
         let mut ret = Shader {
-            path: base_path.to_owned(),
+            path: Some(base_path.to_owned()),
             geo: 0,
             optionals: 0,
             textures: HashMap::new(),
@@ -340,6 +344,7 @@ impl Shader {
         }
         Self::clear_shader();
 
+        ret.check_optionals();
         Ok(ret)
     }
     fn create_shader(shader_type: GLenum) -> Result<u32, GLFunctionError> {
@@ -375,24 +380,22 @@ impl Shader {
         if success == 0 {
             find_gl_error().expect("booyah");
             let mut buf_size = 0;
-            let mut log_len = 0_i32;
             unsafe {
                 gl::GetShaderiv(id, gl::INFO_LOG_LENGTH, &mut buf_size);
             }
-            let mut buf = vec![0; buf_size as usize];
+            let mut buf: Vec<c_char> = Vec::with_capacity(buf_size as usize);
             // Safety: These both have the same buffer size.
             unsafe {
-                gl::GetShaderInfoLog(id, log_len, &mut log_len, buf.as_mut_ptr().cast());
+                gl::GetShaderInfoLog(id, buf_size, ptr::null_mut(), buf.as_mut_ptr().cast());
             }
             println!("{}", source.into_string().unwrap());
-            return Err(GLFunctionError::new(format!(
-                "Shader Compile Error: {}",
-                unsafe {
-                    CStr::from_ptr(buf.as_ptr() as *const GLchar)
-                        .to_string_lossy()
-                        .into_owned()
-                }
-            )));
+            let mut r = "".to_string();
+            unsafe {
+                buf.set_len(buf_size as usize);
+                r.push_str(CStr::from_ptr(buf.as_ptr()).to_str().unwrap());
+            }
+            r.push_str("\n");
+            return Err(GLFunctionError::new(format!("Shader Compile Error: {}", r)));
         }
         unsafe {
             gl::AttachShader(program, id);
@@ -439,7 +442,6 @@ impl Shader {
         }
         // gl::DeleteProgram(self.vert);
         // gl::DeleteProgram(self.frag);
-        self.check_optionals();
         self.bind_matrices();
         Ok(program)
     }
@@ -457,32 +459,34 @@ impl Shader {
         Ok(())
     }
     pub fn try_runtime_recompile(&mut self) {
-        let mut vert_string = self.path.to_owned().clone();
-        vert_string.push_str(".vert");
+        if let Some(path) = self.path.clone() {
+            let mut vert_string: String = path.clone();
+            vert_string.push_str(".vert");
 
-        let mut frag_string = self.path.to_owned().clone();
-        frag_string.push_str(".frag");
-        let vert_source = load_file(vert_string);
-        let frag_source = load_file(frag_string);
+            let mut frag_string: String = path.to_owned().clone();
+            frag_string.push_str(".frag");
+            let vert_source = load_file(vert_string);
+            let frag_source = load_file(frag_string);
 
-        let geo_string = format!("{}.geo", self.path);
-        let mut geo_source = Default::default();
-        if Path::new(&geo_string).exists() {
-            geo_source = load_file(geo_string);
-        }
-
-        if (vert_source != self.debug_sources[0]
-            || frag_source != self.debug_sources[1]
-            || geo_source != self.debug_sources[2])
-            && !vert_source.to_str().unwrap().contains("//proccessed")
-        {
-            let new_progid =
-                self.compile(vert_source.clone(), frag_source.clone(), geo_source.clone());
-            if new_progid.is_ok() {
-                self.program = Some(new_progid.unwrap());
-                self.load_cached_uniforms();
+            let geo_string = format!("{}.geo", path);
+            let mut geo_source = Default::default();
+            if Path::new(&geo_string).exists() {
+                geo_source = load_file(geo_string);
             }
-            self.debug_sources = vec![vert_source, frag_source, geo_source];
+
+            if (vert_source != self.debug_sources[0]
+                || frag_source != self.debug_sources[1]
+                || geo_source != self.debug_sources[2])
+                && !vert_source.to_str().unwrap().contains("//proccessed")
+            {
+                let new_progid =
+                    self.compile(vert_source.clone(), frag_source.clone(), geo_source.clone());
+                if new_progid.is_ok() {
+                    self.program = Some(new_progid.unwrap());
+                    self.load_cached_uniforms();
+                }
+                self.debug_sources = vec![vert_source, frag_source, geo_source];
+            }
         }
     }
     pub fn use_shader(&self) {
@@ -517,13 +521,13 @@ impl Shader {
     }
     fn load_texture(path: &str) -> u32 {
         let img = open(path).expect("Jimbo jones");
-        let height = img.height();
-        let width = img.width();
-        let data = img.to_rgb8().into_raw();
-        Self::create_texture(&data[0] as *const u8 as *const c_void, width, height)
+        Self::create_texture(img)
     }
-    fn create_texture(data: *const c_void, width: u32, height: u32) -> u32 {
+    fn create_texture(data: DynamicImage) -> u32 {
         let mut texture = 0;
+        let img = data.clone();
+        let rgba = img.to_rgba8();
+        let raw = rgba.as_ptr();
         unsafe {
             gl::GenTextures(1, &mut texture);
             gl::BindTexture(TEXTURE_2D, texture);
@@ -531,13 +535,13 @@ impl Shader {
             gl::TexImage2D(
                 TEXTURE_2D,
                 0,
-                gl::RGB as i32,
-                width as GLsizei,
-                height as GLsizei,
+                gl::RGBA as i32,
+                img.width() as GLsizei,
+                img.height() as GLsizei,
                 0,
-                gl::RGB,
+                gl::RGBA,
                 gl::UNSIGNED_BYTE,
-                data,
+                raw.cast(),
             );
             // gl::GenerateMipmap(TEXTURE_2D);
             gl::BindTexture(TEXTURE_2D, 0);
@@ -632,12 +636,12 @@ impl Shader {
     }
 }
 pub enum MaybeColorTexture {
-    Texture(*const c_void, u32, u32),
+    Texture(DynamicImage),
     RGBA([f32; 4]),
     RGB([f32; 3]),
 }
 pub enum MaybeTexture {
-    Texture(*const c_void, u32, u32),
+    Texture(DynamicImage),
     Value(f32),
 }
 pub struct NarrowingMaterial {
@@ -650,7 +654,7 @@ pub struct NarrowingMaterial {
     pub normal: Option<MaybeTexture>,
 }
 impl NarrowingMaterial {
-    pub(crate) fn from_obj_mtl(mut mtl: obj::raw::material::Material) -> NarrowingMaterial{
+    pub(crate) fn from_obj_mtl(mut mtl: obj::raw::material::Material) -> NarrowingMaterial {
         let mut ret = NarrowingMaterial {
             diffuse: None,
             emissive: None,
@@ -671,16 +675,20 @@ impl NarrowingMaterial {
             ret.emissive = Some(MaybeColorTexture::RGBA(new_emis));
         }
         if mtl.optical_density.is_some() {
-            let specular = ((mtl.optical_density.unwrap()-1.0)/(mtl.optical_density.unwrap()+1.0)).powf(2.0)/0.08;
+            let specular = ((mtl.optical_density.unwrap() - 1.0)
+                / (mtl.optical_density.unwrap() + 1.0))
+                .powf(2.0)
+                / 0.08;
             ret.specular = Some(MaybeTexture::Value(specular));
         }
         ret
         // todo: provide waay better support for this.
-
     }
     pub(crate) fn from_gltf_mtl(
         material: gltf::Material,
-        images: Vec<gltf::image::Data>,
+        images: &Vec<gltf::image::Data>,
+        buffers: &Vec<gltf::buffer::Data>,
+        base_path: &str,
     ) -> Result<NarrowingMaterial, Box<dyn Error>> {
         macro_rules! texture_or_factor {
             ($property:expr, $texture_source:expr, $factor_source:expr, $texture_enum:path, $factor_enum:path) => {
@@ -688,22 +696,19 @@ impl NarrowingMaterial {
                     let source = inner_texture.texture().source().source();
                     match source {
                         gltf::image::Source::Uri { uri, .. } => {
-                            let img = open(uri).expect("Couldn't open image");
-                            let data = img.to_rgb8().into_raw();
                             $property = Some($texture_enum(
-                                data.as_ptr().cast(),
-                                img.width(),
-                                img.height(),
+                                open(base_path.to_owned() + "/" + uri)
+                                    .expect("Couldn't open image"),
                             ));
                         }
                         gltf::image::Source::View { view, .. } => {
-                            let img = images
-                                .get(inner_texture.texture().index())
-                                .expect("Couldn't get image")
-                                .to_owned();
-                            let data = img.pixels;
-                            $property =
-                                Some($texture_enum(data.as_ptr().cast(), img.width, img.height));
+                            let buf = view.buffer();
+                            let start: usize = view.offset();
+                            let end: usize = start + view.length();
+                            let img_data =
+                                &buffers.get(buf.index()).unwrap().to_owned()[start..end];
+                            let dynimg = load_from_memory(img_data).expect("Couldn't load image");
+                            $property = Some($texture_enum(dynimg));
                         }
                     }
                 } else {
@@ -760,9 +765,29 @@ impl NarrowingMaterial {
         );
         Ok(ret)
     }
-    pub(crate) fn to_shader(self, base_path: &str) -> Result<Shader, Box<dyn Error>> {
+    pub(crate) fn from_path(self, base_path: &str) -> Result<Shader, Box<dyn Error>> {
+        let mut vert_string = base_path.to_owned().clone();
+        vert_string.push_str(".vert");
+        let mut vert_source = load_file(vert_string).to_str().unwrap().to_owned();
+        let mut frag_string = base_path.to_owned().clone();
+        frag_string.push_str(".frag");
+        let mut frag_source = load_file(frag_string).to_str().unwrap().to_owned();
+        let mut debug_sources = Vec::new();
+        debug_sources.push(CString::new(vert_source.clone()).unwrap());
+        debug_sources.push(CString::new(frag_source.clone()).unwrap());
+        debug_sources.push(CString::new("").unwrap());
+        let mut ret = self.to_shader(vert_source, frag_source)?;
+        ret.debug_sources.extend(debug_sources);
+        ret.path = Some(base_path.to_string());
+        Ok(ret)
+    }
+    pub(crate) fn to_shader(
+        self,
+        mut vert_source: String,
+        mut frag_source: String,
+    ) -> Result<Shader, Box<dyn Error>> {
         let mut ret = Shader {
-            path: base_path.to_owned(),
+            path: None,
             geo: 0,
             optionals: 0,
             textures: HashMap::new(),
@@ -777,9 +802,9 @@ impl NarrowingMaterial {
                 ret.vector_values.insert("diffuse".to_owned(), vec![0.5; 3]);
             }
             Some(enum_val) => match enum_val {
-                MaybeColorTexture::Texture(v, w, h) => {
+                MaybeColorTexture::Texture(v) => {
                     ret.textures
-                        .insert("diffuse".to_owned(), Shader::create_texture(v, w, h));
+                        .insert("diffuse".to_owned(), Shader::create_texture(v));
                 }
                 MaybeColorTexture::RGBA(v) => {
                     ret.vector_values.insert("diffuse".to_owned(), v.to_vec());
@@ -795,9 +820,9 @@ impl NarrowingMaterial {
                 ret.values.insert("specular".to_owned(), 1.0);
             }
             Some(enum_val) => match enum_val {
-                MaybeTexture::Texture(v, w, h) => {
+                MaybeTexture::Texture(v) => {
                     ret.textures
-                        .insert("specular".to_owned(), Shader::create_texture(v, w, h));
+                        .insert("specular".to_owned(), Shader::create_texture(v));
                 }
                 MaybeTexture::Value(v) => {
                     ret.values.insert("specular".to_owned(), v);
@@ -810,9 +835,9 @@ impl NarrowingMaterial {
                     .insert("emissive".to_owned(), vec![0.0; 4]);
             }
             Some(enum_val) => match enum_val {
-                MaybeColorTexture::Texture(v, w, h) => {
+                MaybeColorTexture::Texture(v) => {
                     ret.textures
-                        .insert("emissive".to_owned(), Shader::create_texture(v, w, h));
+                        .insert("emissive".to_owned(), Shader::create_texture(v));
                 }
                 MaybeColorTexture::RGBA(v) => {
                     ret.vector_values.insert("emissive".to_owned(), v.to_vec());
@@ -823,25 +848,14 @@ impl NarrowingMaterial {
                 }
             },
         }
-        let mut vert_string = base_path.to_owned().clone();
-        vert_string.push_str(".vert");
-        let mut vert_source = load_file(vert_string).to_str().unwrap().to_owned();
-        ret.debug_sources
-            .push(CString::new(vert_source.clone()).unwrap());
-        let mut frag_string = base_path.to_owned().clone();
-        frag_string.push_str(".frag");
-        let mut frag_source = load_file(frag_string).to_str().unwrap().to_owned();
-        ret.debug_sources
-            .push(CString::new(frag_source.clone()).unwrap());
-        ret.debug_sources.push(CString::new("").unwrap());
         let mut locations =
             "layout (location = 0) in vec3 aPos;\nlayout (location = 1) in vec3 aNormal;\n"
                 .to_owned();
         let mut passthroughs = "";
-        let mut outs = "vec3 Normal;\nvec3 FragPos;\n".to_owned();
+        let mut outs = "vec3 Normal;\nvec3 FragPos;\nfloat Time;".to_owned();
         let uniforms = "uniform mat4 model;";
         let std140s =
-            "layout (std140) uniform Matrices {vec3 cameraPos;\nmat4 view;\nmat4 projection;\n};\nlayout (std140, binding=1) uniform World {vec4 ambient;};";
+                "layout (std140) uniform Matrices {vec3 cameraPos;\nmat4 view;\nmat4 projection;\n};\nlayout (std140, binding=1) uniform World {vec4 ambient;};";
         // if mtl.diffuse_map.clone().is_some()
         //     || mtl.specular_map.clone().is_some()
         //     || mtl.emissive_map.is_some()
@@ -895,6 +909,7 @@ impl NarrowingMaterial {
         frag_source = frag_source.replace("//T: TEXTURES", textures.as_str());
         frag_source = frag_source.replace("//T: LOGIC", logic.as_str());
         frag_source = frag_source.replace("//T: UNIFORMS", uniforms.as_str());
+        println!("{}", vert_source);
         ret.program = Some(ret.compile(
             CString::new(vert_source).expect("Failed to create CString"),
             CString::new(frag_source).expect("Failed to create CString"),
@@ -913,7 +928,7 @@ impl NarrowingMaterial {
             ret.set(v, os.as_str()).expect("Failed to set values");
         }
         Shader::clear_shader();
-
+        ret.check_optionals();
         Ok(ret)
     }
 }

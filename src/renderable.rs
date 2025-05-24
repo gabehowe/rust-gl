@@ -6,8 +6,8 @@ use std::mem::size_of;
 use std::path::Path;
 use std::ptr::null;
 
-use crate::engine::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager};
-use crate::engine::transformation::{Transformable, Transformation};
+use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager};
+use crate::transformation::{Transformable, Transformation};
 use cgmath::{Euler, Matrix, Matrix4, One, Rad, Vector2, Vector3, Zero};
 use gl::types::{GLenum, GLfloat, GLsizei, GLuint};
 use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, STATIC_DRAW, TRIANGLES, UNSIGNED_INT};
@@ -17,10 +17,15 @@ use obj::{FromRawVertex, TexturedVertex};
 
 pub trait Render: Transformable {
     fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>);
+    fn is(&self) -> bool;
+    fn set_is(&mut self, val: bool);
 }
 
 impl Render for Renderable {
     fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>) {
+        if !self.is {
+            return;
+        }
         let model = self.build_model();
         let shader = shader_manager
             .get_mut(shader_override.unwrap_or(self.shader))
@@ -42,6 +47,14 @@ impl Render for Renderable {
         }
         Shader::clear_shader();
     }
+
+    fn is(&self) -> bool {
+        self.is
+    }
+
+    fn set_is(&mut self, val: bool) {
+        self.is = val;
+    }
 }
 impl Transformable for Renderable {
     fn scale(&mut self, x: f32, y: f32, z: f32) {
@@ -61,7 +74,7 @@ impl Transformable for Renderable {
 }
 
 pub struct Renderable {
-    pub(crate) vertices: Vec<Vector3<c_float>>,
+    pub vertices: Vec<Vector3<c_float>>,
     indices: Vec<c_uint>,
     pub shader: usize,
     vertex_array: GLuint,
@@ -73,6 +86,7 @@ pub struct Renderable {
     normals: Vec<Vector3<f32>>,
     tex_coords: Vec<Vector2<f32>>,
     pub draw_type: GLenum,
+    is: bool,
 }
 
 impl Renderable {
@@ -83,14 +97,26 @@ impl Renderable {
         tex_coords: Vec<Vector2<f32>>,
         shader: usize,
     ) -> Renderable {
-        Renderable {
+        let mut ret = Renderable {
             tex_coords,
-            ..Renderable::new(vertices, indices, normals, shader)
-        }
+            ..Renderable::data_only(vertices, indices, normals, shader)
+        };
+        ret.new_fini();
+        return ret
         // TODO: Should probably use Result here or smth.
     }
 
-    pub(crate) fn new(
+    pub fn new(
+        vertices: Vec<Vector3<f32>>,
+        indices: Vec<u32>,
+        normals: Vec<Vector3<f32>>,
+        shader: usize,
+    ) -> Renderable {
+        let mut ret = Self::data_only(vertices, indices, normals, shader);
+        ret.new_fini();
+        ret
+    }
+    pub(crate) fn data_only(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
         normals: Vec<Vector3<f32>>,
@@ -109,15 +135,19 @@ impl Renderable {
             normals,
             tex_coords: Vec::new(),
             draw_type: TRIANGLES,
+            is: true,
         };
+        ret
+    }
+    fn new_fini(&mut self){
         unsafe {
-            ret.gen_buffers();
+            self.gen_buffers();
 
-            gl::BindVertexArray(ret.vertex_array);
+            gl::BindVertexArray(self.vertex_array);
 
-            ret.init_array_buffers();
+            self.init_array_buffers();
 
-            ret.gen_vertex_attrib_arrays();
+            self.gen_vertex_attrib_arrays();
             //
             // gl::EnableVertexAttribArray(1);
             // gl::VertexAttribPointer(1, 3, FLOAT, FALSE, (6 * size_of::<GLfloat>()) as GLsizei, (3 * size_of::<GLfloat>()) as *const _);
@@ -125,7 +155,6 @@ impl Renderable {
             gl::BindBuffer(ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
         }
-        ret
     }
     unsafe fn gen_vertex_attrib_arrays(&mut self) {
         let mut stride = 2 * (3 * size_of::<GLfloat>()) as GLsizei;
@@ -246,7 +275,7 @@ impl Renderable {
         .map_err(|_| "Couldn't parse mtl!")?;
         let mat =
             NarrowingMaterial::from_obj_mtl(raw_mtl.materials.get("Material.001").unwrap().clone());
-        let new_shader = mat.to_shader(shaderpath)?;
+        let new_shader = mat.from_path(shaderpath)?;
 
         // let new_shader = Shader::load_from_path("shaders/comp_base_shader");
         Ok(Renderable::new_with_tex(
@@ -277,9 +306,20 @@ impl Renderable {
 }
 impl Render for Mesh {
     fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>) {
+        if !self.is {
+            return
+        }
         for i in 0..self.renderables.len() {
             self.renderables[i].render(shader_manager, shader_override);
         }
+    }
+
+    fn is(&self) -> bool {
+        self.is
+    }
+
+    fn set_is(&mut self, val: bool) {
+        self.is = val;
     }
 }
 impl Transformable for Mesh {
@@ -306,6 +346,7 @@ impl Transformable for Mesh {
 }
 pub struct Mesh {
     renderables: Vec<Renderable>,
+    is: bool
 }
 impl Mesh {
     pub fn from_gltf(
@@ -313,12 +354,21 @@ impl Mesh {
         shaderpath: &str,
         shader_manager: &mut ShaderManager,
     ) -> Result<Mesh, Box<dyn Error>> {
+        let mut ancestors = Path::new(path).ancestors().to_owned();
+        let mut base = "";
+        ancestors.next();
+        if let Some(root) = ancestors.next() {
+            base = root.to_str().expect("Should be a string.");
+        }
+        
         let (document, buffers, images) = gltf::import(path)?;
+            
+        
         let mut renderables: Vec<Renderable> = Vec::new();
         let mut materials: Vec<usize> = Vec::new();
         for i in document.materials() {
-            let mat = NarrowingMaterial::from_gltf_mtl(i, images.clone())?;
-            materials.push(shader_manager.register(mat.to_shader(shaderpath)?));
+            let mat = NarrowingMaterial::from_gltf_mtl(i, &images, &buffers, base)?;
+            materials.push(shader_manager.register(mat.from_path(shaderpath)?));
         }
         for mesh in document.meshes() {
             for primitive in mesh.primitives() {
@@ -341,6 +391,6 @@ impl Mesh {
                 ));
             }
         }
-        Ok(Mesh { renderables })
+        Ok(Mesh { renderables, is: true })
     }
 }
