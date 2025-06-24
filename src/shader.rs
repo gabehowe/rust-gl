@@ -7,6 +7,7 @@ use gl::{
 };
 use glfw::ffi::glfwGetTime;
 use image::{load_from_memory, open, DynamicImage, EncodableLayout};
+use log::{debug, log, trace};
 use obj::raw::material::{Material, MtlColor};
 use obj::{TexturedVertex, Vertex};
 use std::collections::hash_map::{Iter, IterMut};
@@ -388,7 +389,7 @@ impl Shader {
             unsafe {
                 gl::GetShaderInfoLog(id, buf_size, ptr::null_mut(), buf.as_mut_ptr().cast());
             }
-            println!("{}", source.into_string().unwrap());
+            trace!("{}", source.into_string().unwrap());
             let mut r = "".to_string();
             unsafe {
                 buf.set_len(buf_size as usize);
@@ -521,33 +522,57 @@ impl Shader {
     }
     fn load_texture(path: &str) -> u32 {
         let img = open(path).expect("Jimbo jones");
-        Self::create_texture(img)
+        Self::create_image_texture(img)
     }
-    fn create_texture(data: DynamicImage) -> u32 {
+    fn create_image_texture(data: DynamicImage) -> u32 {
         let mut texture = 0;
         let img = data.clone();
         let rgba = img.to_rgba8();
-        let raw = rgba.as_ptr();
+        let raw = rgba;
         unsafe {
             gl::GenTextures(1, &mut texture);
             gl::BindTexture(TEXTURE_2D, texture);
             Self::setup_textures();
+            Self::set_texture(
+                texture as usize,
+                &raw.to_vec(),
+                img.width() as usize,
+                img.height() as usize,
+            )
+            // gl::GenerateMipmap(TEXTURE_2D);
+        }
+
+        texture
+    }
+    pub(crate) fn set_texture(texture: usize, data: &Vec<u8>, width: usize, height: usize) {
+        unsafe {
+            gl::BindTexture(TEXTURE_2D, texture as GLuint);
             gl::TexImage2D(
                 TEXTURE_2D,
                 0,
                 gl::RGBA as i32,
-                img.width() as GLsizei,
-                img.height() as GLsizei,
+                width as GLsizei,
+                height as GLsizei,
                 0,
                 gl::RGBA,
                 gl::UNSIGNED_BYTE,
-                raw.cast(),
+                data.as_ptr().cast(),
             );
+            gl::BindTexture(TEXTURE_2D, 0);
+        }
+    }
+    pub fn register_create_texture(&mut self, name: &str) -> usize {
+        let mut texture = 0;
+        unsafe {
+            gl::GenTextures(1, &mut texture);
+            gl::BindTexture(TEXTURE_2D, texture);
+            Self::setup_textures();
             // gl::GenerateMipmap(TEXTURE_2D);
             gl::BindTexture(TEXTURE_2D, 0);
         }
 
-        texture
+        self.textures.insert(name.to_string(), texture);
+        texture as usize
     }
     fn use_textures(&self) {
         let vals = self.textures.values().cloned().collect::<Vec<u32>>();
@@ -804,7 +829,7 @@ impl NarrowingMaterial {
             Some(enum_val) => match enum_val {
                 MaybeColorTexture::Texture(v) => {
                     ret.textures
-                        .insert("diffuse".to_owned(), Shader::create_texture(v));
+                        .insert("diffuse".to_owned(), Shader::create_image_texture(v));
                 }
                 MaybeColorTexture::RGBA(v) => {
                     ret.vector_values.insert("diffuse".to_owned(), v.to_vec());
@@ -822,7 +847,7 @@ impl NarrowingMaterial {
             Some(enum_val) => match enum_val {
                 MaybeTexture::Texture(v) => {
                     ret.textures
-                        .insert("specular".to_owned(), Shader::create_texture(v));
+                        .insert("specular".to_owned(), Shader::create_image_texture(v));
                 }
                 MaybeTexture::Value(v) => {
                     ret.values.insert("specular".to_owned(), v);
@@ -837,7 +862,7 @@ impl NarrowingMaterial {
             Some(enum_val) => match enum_val {
                 MaybeColorTexture::Texture(v) => {
                     ret.textures
-                        .insert("emissive".to_owned(), Shader::create_texture(v));
+                        .insert("emissive".to_owned(), Shader::create_image_texture(v));
                 }
                 MaybeColorTexture::RGBA(v) => {
                     ret.vector_values.insert("emissive".to_owned(), v.to_vec());

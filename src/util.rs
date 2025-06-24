@@ -12,14 +12,15 @@ pub extern "system" fn debug_log(
     msg: *const gl::types::GLchar,
     _: *mut std::os::raw::c_void,
 ) {
-    let msg = unsafe {CStr::from_ptr(msg).to_string_lossy()};
+    let msg = unsafe { CStr::from_ptr(msg).to_string_lossy() };
     if !msg.contains("Buffer detailed info:") {
         println!("GL Debug: {}", msg);
     }
 }
 
 pub fn load_file(path: String) -> CString {
-    let mut file = File::open(path.as_str()).unwrap_or_else(|_| panic!("Failed to open file!"));
+    let mut file =
+        File::open(path.as_str()).unwrap_or_else(|_| panic!("Failed to open file {}!", path));
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .expect("TODO: panic message");

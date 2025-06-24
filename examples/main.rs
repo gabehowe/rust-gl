@@ -1,9 +1,8 @@
 use rust_gl::shader::SetValue;
 use cgmath::num_traits::Pow;
-use cgmath::{ortho, perspective, vec3, Deg, Matrix4, One, SquareMatrix, Vector3, Zero};
+use cgmath::{ortho, perspective, vec3, Deg, Matrix4, One, SquareMatrix, Vector2, Vector3, Zero};
 use gl::{COLOR_BUFFER_BIT, DEPTH_BUFFER_BIT};
 use imgui::{Condition, Ui};
-use noise::Vector2;
 
 use rust_gl::renderable::{Mesh, Renderable};
 use rust_gl::transformation::Transformable;
@@ -33,7 +32,7 @@ fn main() {
     let mat = perspective(Deg(100.0), 16. / 9., 0.01, 1000.0);
 
     println!("{:?}", mat);
-    let mut engine = Engine::new(true).expect("Failed to create engine");
+    let mut engine = Engine::new(true, "main window").expect("Failed to create engine");
     // engine.data.camera.projection = engine.data.camera.projection *
     // Matrix4::new(1.,0.,0.,0.,
     //              0.,1.,0.,0.,
@@ -52,7 +51,7 @@ fn main() {
     let vertices_per_unit = 0.1;
     let converted_size: f32 = size / vertices_per_unit;
     println!("{:?}", converted_size.round() as u32);
-    let grid_verts = create_grid(
+    let grid_verts = Mesh::create_grid(
         converted_size.round() as u32,
         converted_size.round() as u32,
         vertices_per_unit,
@@ -145,6 +144,7 @@ fn main() {
                     imgui.label_text("pos", format!("{:0.2} {:0.2} {:0.2}", pos.x, pos.y, pos.z));
                     imgui.label_text("objs", format!("sh {} | objs {}", data.shader_manager.count(), data.renderables.len()))
                 });
+        
         });
         // if engine.data.frame_buffer_texture.is_some() {
         //     unsafe {
@@ -162,37 +162,4 @@ fn main() {
             .get_renderable_mut(renderable)
             .rotate(0.0, 0.00, 0.1 * engine.frametime as f32);
     }
-}
-
-fn create_grid(
-    width: u32,
-    length: u32,
-    scale: f32,
-    pos: Vector2<f32>,
-) -> (Vec<Vector3<f32>>, Vec<u32>, Vec<Vector3<f32>>) {
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-    let mut normals = Vec::new();
-    let mut offset = 0;
-
-    for i in 0..width {
-        for j in 0..length {
-            vertices.push(Vector3::new(
-                (i as f32 * scale) + pos.x,
-                0.0,
-                j as f32 * scale + pos.y,
-            ));
-            normals.push(Vector3::new(0.0, 1.0, 0.0));
-            if i != 0 && j != 0 {
-                indices.push(offset - length - 1);
-                indices.push(offset - length);
-                indices.push(offset);
-                indices.push(offset - 1);
-                indices.push(offset - length - 1);
-                indices.push(offset);
-            }
-            offset += 1;
-        }
-    }
-    (vertices, indices, normals)
 }

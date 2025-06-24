@@ -393,4 +393,36 @@ impl Mesh {
         }
         Ok(Mesh { renderables, is: true })
     }
+    pub fn create_grid(
+        width: u32,
+        length: u32,
+        scale: f32,
+        pos: Vector2<f32>,
+    ) -> (Vec<Vector3<f32>>, Vec<u32>, Vec<Vector3<f32>>) {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut normals = Vec::new();
+        let mut offset = 0;
+
+        for i in 0..width {
+            for j in 0..length {
+                vertices.push(Vector3::new(
+                    (i as f32 * scale) + pos.x,
+                    0.0,
+                    j as f32 * scale + pos.y,
+                ));
+                normals.push(Vector3::new(0.0, 1.0, 0.0));
+                if i != 0 && j != 0 {
+                    indices.push(offset - length - 1);
+                    indices.push(offset - length);
+                    indices.push(offset);
+                    indices.push(offset - 1);
+                    indices.push(offset - length - 1);
+                    indices.push(offset);
+                }
+                offset += 1;
+            }
+        }
+        (vertices, indices, normals)
+    }
 }
