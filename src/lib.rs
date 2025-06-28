@@ -1,12 +1,11 @@
 extern crate gl;
-extern crate glfw;
 
-use std::error::Error;
-use std::ptr;
+pub use cgmath;
+pub use glfw;
+use std::cell::RefCell;
 
-use renderable::Render;
-use shader::{MaybeColorTexture, NarrowingMaterial, Shader, ShaderManager};
-use transformation::Transformation;
+// use transformation::Transformation;
+use crate::shader::ShaderPtr;
 use cgmath::{InnerSpace, Vector3};
 use gl::{
     COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION,
@@ -14,70 +13,80 @@ use gl::{
 };
 use glfw::ffi::*;
 use glfw::{
-    fail_on_errors, Action, Context, CursorMode, Glfw, GlfwReceiver, Key, PWindow,
-    SwapInterval, WindowEvent, WindowHint,
+    fail_on_errors, Action, Context, CursorMode, Glfw, GlfwReceiver, Key, PWindow, SwapInterval,
+    WindowEvent, WindowHint,
 };
 use image::{ImageBuffer, Rgba};
 use imgui::*;
+use renderable::Render;
 use renderable::Renderable;
+use shader::{MaybeColorTexture, NarrowingMaterial, ShaderManager};
+use std::error::Error;
+use std::ptr;
+use std::sync::Arc;
 use transformation::Camera;
 use util::debug_log;
 
+pub mod drawing;
 pub mod renderable;
 pub mod shader;
 pub mod transformation;
 pub mod util;
 
-const HEIGHT: u32 = 1000;
-const WIDTH: u32 = HEIGHT * 16 / 9;
+pub const HEIGHT: usize = 1000;
+pub const WIDTH: usize = HEIGHT * 16 / 9;
 const MOVESPEED: f32 = 2.5;
 const ROTATIONSPEED: f32 = 2.5;
 pub(crate) const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
-
+type RenderablePtr = Arc<RefCell<Box<dyn Render>>>;
+fn new_renderable_ptr<T: Render + 'static>(renderable: T) -> RenderablePtr {
+    Arc::new(RefCell::new(Box::new(renderable)))
+}
 pub struct Data {
-    pub renderables: Vec<Box<dyn Render>>,
+    pub renderables: Vec<RenderablePtr>,
     pub camera: Camera,
-    wireframe_shader: usize,
+    wireframe_shader: ShaderPtr,
     pub shader_manager: ShaderManager,
     pub frame_buffer_texture: Option<(u32, u32)>,
 }
 
 impl Data {
-    fn update(&mut self) {
-        self.shader_manager.update();
+    fn update(&mut self) -> Result<(), Box<dyn Error>> {
+        self.shader_manager.update()
     }
-    fn render(&mut self, wireframe: bool) {
+    fn render(&mut self, wireframe: bool) -> Result<(), Box<dyn Error>> {
         // Safety: We know that the key is a valid key because we are using the glfw::Key enum.
         unsafe {
             gl::ClearColor(CLEARCOLOR.0, CLEARCOLOR.1, CLEARCOLOR.2, CLEARCOLOR.3);
             gl::Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
         }
-        self.camera.update_buffers(); // Only needs to be updated if it changes. Optimization?
-                                      // unsafe {renderables[0].shader.set_vec3(Vector3::new(255.0, 0.0, 0.0), "ourColor");}
-                                      // unsafe {renderables[1].shader.set_vec3(Vector3::new(0.0, 0.0, 255.0), "ourColor");}
-
-        // self.renderables.get_mut(0).unwrap().render(None);
+        self.camera.update_buffers(); // Only needs to be updated if it changes. TODO: Optimization?
         for i in self.renderables.iter_mut() {
-            i.render(&mut self.shader_manager, if wireframe {
-                Some(self.wireframe_shader)
-            } else {
-                None
-            });
+            i.try_borrow_mut()?
+                .render(wireframe.then(|| self.wireframe_shader.clone()))?;
         }
-
+        Ok(())
     }
-    pub fn add_renderable(&mut self, mut renderable: Box<dyn Render>) -> Result<usize, Box<dyn Error>> {
-        self.renderables.push(Box::from(renderable));
-        Ok(self.renderables.len() - 1)
+    pub fn add_renderable(
+        &mut self,
+        renderable: Box<dyn Render>,
+    ) -> Result<RenderablePtr, Box<dyn Error>> {
+        let arc = Arc::new(RefCell::new(renderable));
+        self.renderables.push(arc.clone());
+        Ok(arc.clone())
     }
-    pub fn add_renderable_from_obj(&mut self, path: &str, shaderpath: &str) -> Result<usize, Box<dyn Error>> {
+    pub fn add_renderable_from_obj(
+        &mut self,
+        path: &str,
+        shaderpath: &str,
+    ) -> Result<RenderablePtr, Box<dyn Error>> {
         let renderable = Renderable::from_obj(path, shaderpath, &mut self.shader_manager)?;
         self.add_renderable(Box::from(renderable))
     }
 
     fn handle_input(&mut self, window: &PWindow, frametime: f64) {
         let mut speed = MOVESPEED * frametime as f32;
-        let mut rot_speed = ROTATIONSPEED * frametime as f32;
+        let rot_speed = ROTATIONSPEED * frametime as f32;
         if window.get_key(Key::LeftShift) == Action::Press {
             speed *= 3.0;
         }
@@ -126,14 +135,14 @@ impl Data {
         }
     }
 
-    pub fn get_renderable(&self, index: usize) -> &Box<dyn Render> {
+    pub fn get_renderable(&self, index: usize) -> &RenderablePtr {
         &self.renderables[index]
     }
-    pub fn get_renderable_mut(&mut self, index: usize) -> &mut Box<dyn Render> {
+    pub fn get_renderable_mut(&mut self, index: usize) -> &mut RenderablePtr {
         &mut self.renderables[index]
     }
     pub fn create_framebuffer_texture(&mut self) {
-        let mut buff = 0; 
+        let mut buff = 0;
         unsafe {
             gl::GenFramebuffers(1, &mut buff);
             gl::BindFramebuffer(gl::FRAMEBUFFER, buff);
@@ -155,7 +164,13 @@ impl Data {
             );
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, texture, 0);
+            gl::FramebufferTexture2D(
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0,
+                gl::TEXTURE_2D,
+                texture,
+                0,
+            );
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
         }
         self.frame_buffer_texture = Some((buff, texture));
@@ -170,11 +185,15 @@ pub struct Engine {
     pub data: Data,
     pub event_handler: EventHandler,
     pub frame_index: u32,
+    pub size: [usize; 2],
 }
 
 impl Engine {
-    pub fn new(imgui: bool) -> Result<Engine, Box<dyn Error>> {
-        let (glfw, mut window, events) = init_gflw();
+    pub fn add_renderable(&mut self, renderable: Box<dyn Render>) -> Result<RenderablePtr, Box<dyn Error>> {
+        self.data.add_renderable(renderable)
+    }
+    pub fn new(imgui: bool, window_name: &str) -> Result<Engine, Box<dyn Error>> {
+        let (glfw, mut window, events) = init_gflw(window_name);
         let camera = Engine::init_gl();
         unsafe {
             // dunno why these are here.
@@ -195,9 +214,10 @@ impl Engine {
             ambient_scaling: None,
             normal: None,
         };
-        let wireframe_id = shader_manager.register(mat.to_shader(
-            include_str!("../shaders/base_shader.vert").to_string(), include_str!("../shaders/base_shader.frag").to_string())
-        ?);
+        let wireframe_id = shader_manager.register(mat.into_shader(
+            include_str!("../shaders/base_shader.vert").to_string(),
+            include_str!("../shaders/base_shader.frag").to_string(),
+        )?);
         Ok(Engine {
             glfw,
             window,
@@ -212,6 +232,7 @@ impl Engine {
             },
             event_handler,
             frame_index: 0,
+            size: [WIDTH, HEIGHT],
         })
     }
     pub fn write_to_file(&self, path: &str) {
@@ -234,6 +255,9 @@ impl Engine {
         image::imageops::flip_vertical(&img)
             .save(path)
             .expect("Failed to save image.");
+    }
+    pub fn set_cursor_mode(&mut self, cursor_mode: CursorMode){
+        self.window.set_cursor_mode(cursor_mode);
     }
 
     fn init_gl() -> Camera {
@@ -261,7 +285,7 @@ impl Engine {
         self.frame_index += 1;
 
         self.data.handle_input(&self.window, self.frametime);
-        self.data.render(self.event_handler.wireframe);
+        self.data.render(self.event_handler.wireframe).expect("failed to render.");
         // Allow for disabling imgui
         if self.event_handler.imgui.is_some() && self.event_handler.show_imgui {
             let imgui_glfw_ref = self.event_handler.imgui_glfw.as_mut().unwrap();
@@ -273,7 +297,10 @@ impl Engine {
         }
 
         self.window.swap_buffers();
-        unsafe {gl::Flush();}
+        unsafe {
+            gl::Flush();
+        }
+        self.event_handler.events.clear();
         self.process_glfw_events();
 
         self.event_handler.current_frame_time = unsafe { glfwGetTime() };
@@ -281,7 +308,7 @@ impl Engine {
         self.event_handler.last_frame_time = self.event_handler.current_frame_time;
         if self.event_handler.current_frame_time - self.event_handler.last_tick > 1.0 {
             self.event_handler.last_tick = self.event_handler.current_frame_time;
-            self.data.update();
+            self.data.update().expect("Failed to update shaders.");
         }
         // let frame_rate = 1.0 / self.frametime;
         // println!("Frame rate: {}", frame_rate);
@@ -299,6 +326,7 @@ impl Engine {
             match event {
                 WindowEvent::FramebufferSize(width, height) => unsafe {
                     gl::Viewport(0, 0, width, height);
+                    self.size = [width as usize, height as usize];
                 },
                 WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
                     self.window.set_should_close(true);
@@ -343,7 +371,7 @@ impl Engine {
                         }
                     });
                     match fullscreen {
-                        false => self.glfw.with_primary_monitor(|g, mut m| {
+                        false => self.glfw.with_primary_monitor(|_, m| {
                             let monitor = m.unwrap();
                             let workarea = monitor.get_workarea();
                             self.window.set_monitor(
@@ -360,8 +388,8 @@ impl Engine {
                                 glfw::WindowMode::Windowed,
                                 250,
                                 250,
-                                WIDTH,
-                                HEIGHT,
+                                WIDTH as u32,
+                                HEIGHT as u32,
                                 None,
                             );
                         }
@@ -378,6 +406,9 @@ impl Engine {
             }
         }
     }
+    pub fn get_time(&mut self) -> f64 {
+        self.glfw.get_time()
+    }
 }
 
 pub struct EventHandler {
@@ -388,6 +419,7 @@ pub struct EventHandler {
     imgui_glfw: Option<imgui_glfw_rs::ImguiGLFW>,
     show_imgui: bool,
     last_tick: f64,
+    pub events: Vec<WindowEvent>,
 }
 impl EventHandler {
     fn new(window: &mut PWindow) -> EventHandler {
@@ -414,21 +446,22 @@ impl EventHandler {
             imgui_glfw: None,
             show_imgui: true,
             last_tick: 0.0,
+            events: Vec::new(),
         }
     }
 }
 
-fn init_gflw() -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
+fn init_gflw(window_name: &str) -> (Glfw, PWindow, GlfwReceiver<(f64, WindowEvent)>) {
     use glfw::fail_on_errors;
     let mut glfw = glfw::init(fail_on_errors!()).unwrap();
 
-    let (mut window, events) =
-            glfw.create_window(
-                WIDTH,
-                HEIGHT,
-                "Hello this is window",
-                glfw::WindowMode::Windowed
-                )
+    let (mut window, events) = glfw
+        .create_window(
+            WIDTH as u32,
+            HEIGHT as u32,
+            window_name,
+            glfw::WindowMode::Windowed,
+        )
         .expect("Failed to create GLFW window.");
 
     glfw.window_hint(WindowHint::ContextVersionMajor(4));

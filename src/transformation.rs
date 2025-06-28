@@ -1,18 +1,115 @@
-use std::mem::{size_of};
+extern crate proc_macro;
+use std::mem::size_of;
 use std::ptr::null;
 
-use cgmath::{perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, Point3, Rad, Vector2, Vector3};
+use crate::util::find_gl_error;
+use cgmath::{
+    perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, One, Point3, Rad, Vector2,
+    Vector3, Zero,
+};
 use gl::types::{GLsizeiptr, GLuint};
 use gl::{STATIC_DRAW, UNIFORM_BUFFER};
 use imgui::sys::cty::c_double;
-use crate::util::find_gl_error;
 
-pub trait Transformation {
+#[macro_export]
+macro_rules! derive_transformable {
+    ($obj:ty) => {
+        impl Transformable for $obj {
+            fn scale(&mut self, x: f32, y: f32, z: f32) {
+                self.transform.scale(x, y, z);
+            }
+            fn uniform_scale(&mut self, scale: f32) {
+                self.transform.uniform_scale(scale);
+            }
+            fn rotate(&mut self, x: f32, y: f32, z: f32) {
+                self.transform.rotate(x, y, z);
+            }
+            fn translate(&mut self, x: f32, y: f32, z: f32) {
+                self.transform.translate(x, y, z);
+            }
+        }
+    };
+}
+
+#[derive(Clone, Debug)]
+pub struct Transform {
+    pub position: Vector3<f32>,
+    pub rotation: Vector3<f32>,
+    pub scale: Vector3<f32>,
+}
+
+impl Transform {
+    pub fn new() -> Self {
+        Transform {
+            position: Vector3::zero(),
+            rotation: Vector3::zero(),
+            scale: Vector3::new(1.0, 1.0, 1.0),
+        }
+    }
+
+    pub fn with_position(position: Vector3<f32>) -> Self {
+        Transform {
+            position,
+            rotation: Vector3::zero(),
+            scale: Vector3::new(1.0, 1.0, 1.0),
+        }
+    }
+
+    pub fn with_scale(scale: Vector3<f32>) -> Self {
+        Transform {
+            position: Vector3::zero(),
+            rotation: Vector3::zero(),
+            scale,
+        }
+    }
+
+    pub fn mat(&self) -> Matrix4<f32> {
+        let mut model = Matrix4::one();
+        model = model * Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z);
+        model = model * Matrix4::from_translation(self.position);
+        model = model
+            * Matrix4::from(Euler::new(
+                Rad(self.rotation.x),
+                Rad(self.rotation.z),
+                Rad(self.rotation.y),
+            ));
+        model
+    }
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Transformable for Transform {
+    fn scale(&mut self, x: f32, y: f32, z: f32) {
+        self.scale.x *= x;
+        self.scale.y *= y;
+        self.scale.z *= z;
+    }
+
+    fn uniform_scale(&mut self, scale: f32) {
+        self.scale *= scale;
+    }
+
+    fn rotate(&mut self, x: f32, y: f32, z: f32) {
+        self.rotation += Vector3::new(x, y, z);
+    }
+
+    fn translate(&mut self, x: f32, y: f32, z: f32) {
+        self.position += Vector3::new(x, y, z);
+    }
+}
+
+/*pub trait Transformation {
     fn scale(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
     fn uniform_scale(&mut self, scale: f32) -> Matrix4<f32>;
     fn rotate(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
     fn translate(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
 }
+*/
 pub trait Transformable {
     fn scale(&mut self, x: f32, y: f32, z: f32);
     fn uniform_scale(&mut self, scale: f32);
@@ -20,7 +117,7 @@ pub trait Transformable {
     fn translate(&mut self, x: f32, y: f32, z: f32);
 }
 
-impl Transformation for Matrix4<f32> {
+/*impl Transformation for Matrix4<f32> {
     fn scale(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32> {
         *self * Matrix4::from_nonuniform_scale(x, y, z)
     }
@@ -34,7 +131,7 @@ impl Transformation for Matrix4<f32> {
         *self * Matrix4::from_translation(Vector3::new(x, y, z))
     }
 }
-
+*/
 pub struct Camera {
     pub pos: Vector3<f32>,
     pub rot: Vector2<f32>,
@@ -44,6 +141,12 @@ pub struct Camera {
     pub(crate) front: Vector3<f32>,
     pub(crate) pitch: f32,
     pub(crate) yaw: f32,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Camera {
@@ -63,6 +166,8 @@ impl Camera {
             yaw: 0.0,
         }
     }
+    /// # Safety
+    /// ??
     pub unsafe fn initialize_buffers(&mut self) {
         gl::GenBuffers(1, &mut self.uniform_buffer);
         gl::BindBuffer(UNIFORM_BUFFER, self.uniform_buffer);
@@ -74,8 +179,8 @@ impl Camera {
             0,
             self.uniform_buffer,
             0,
-            2 * size_of::<Matrix4<f32>>() as GLsizeiptr);
-
+            2 * size_of::<Matrix4<f32>>() as GLsizeiptr,
+        );
     }
 
     fn get_view_matrix(&mut self) -> Matrix4<f32> {
@@ -88,7 +193,6 @@ impl Camera {
     }
 
     pub fn update_vectors(&mut self) {
-
         self.front = Vector3::new(
             self.pitch.cos() * self.yaw.cos(),
             self.pitch.sin(),
@@ -122,7 +226,7 @@ impl Camera {
             );
             gl::BindBuffer(UNIFORM_BUFFER, 0);
         }
-        find_gl_error();
+        find_gl_error().unwrap();
         // println!("{:?}", std::mem::size_of::<Matrix4<f32>>());
         // gl::GetBufferSubData(UNIFORM_BUFFER, offset, (1 * std::mem::size_of::<Matrix4<f32>>()) as GLsizeiptr, transmute(&self.pos[0]));
         // println!("{:?} {:?}", self.view.x, self.projection.x);
