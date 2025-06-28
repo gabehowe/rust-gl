@@ -25,4 +25,3 @@ uuid = { version = "1.11.0", features = ["v4"] }
 log = "0.4.21"
 gltf = { version = "1.4.1", features = ["KHR_materials_specular"] }
 itertools = "0.12.1"
-

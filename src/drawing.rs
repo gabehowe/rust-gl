@@ -1,124 +1,169 @@
 /*
-Store an image in a matrix
-Write the matrix to a texture
+Store vector objects
+Render the vector objects
 */
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features, unused)]
 
-use crate::shader::Shader;
-use noise::Vector2;
+use crate::derive_transformable;
+use crate::renderable::{MeshData, Render, Renderable};
+use crate::shader::{
+    MaybeColorTexture, NarrowingMaterial, SetValue, Shader, ShaderManager, ShaderPtr,
+};
+use crate::transformation::{Transform, Transformable};
+use cgmath::num_traits::{AsPrimitive, Pow, ToPrimitive};
+use cgmath::{vec3, InnerSpace, Matrix3, Matrix4, SquareMatrix, Vector2, Vector3};
+use gl::types::{GLsizei, GLuint};
+use itertools::Itertools;
+use obj::Vertex;
 use std::cmp::min_by;
-use cgmath::num_traits::AsPrimitive;
+use std::error::Error;
+use std::f32;
+use std::ffi::c_float;
+use std::ptr::null;
+use std::sync::Arc;
+
+derive_transformable!(Object2d);
+struct Object2d {
+    color: [u8; 4],
+    transform: Transform,
+    shader: ShaderPtr,
+    mesh_data: Arc<MeshData>,
+}
+
+impl Render for Object2d {
+    fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>> {
+        let mut shader = self.shader.try_borrow_mut()?;
+        shader.use_();
+        shader.set(self.transform.mat(), "model");
+        shader.set(self.color.map(|x| x as u32).to_vec(), "color");
+        unsafe {
+            gl::BindVertexArray(self.mesh_data.vertex_array);
+            gl::DrawElements(
+                gl::TRIANGLE_FAN,
+                self.mesh_data.indices.len() as GLsizei,
+                gl::UNSIGNED_INT,
+                null(),
+            );
+            gl::BindVertexArray(0);
+        }
+        Shader::clear_shader();
+        Ok(())
+    }
+    fn is(&self) -> bool {
+        todo!()
+    }
+    fn set_is(&mut self, val: bool) {
+        todo!()
+    }
+}
 
 pub struct Draw {
-    matrix: Vec<u8>,
-    width: usize,
-    height: usize,
-    size: usize,
+    objects: Vec<Object2d>,
+    size: Vector2<u32>,
+    shader: ShaderPtr,
+    primitives: Vec<Arc<MeshData>>,
 }
-impl Default for Draw {
-    fn default() -> Self {
-        Self::new(10, 10)
-    }
-}
+const CIRCLE_RESOLUTION: usize = 50;
 
 impl Draw {
-    pub fn new(width: usize, height: usize) -> Self {
-        let mut ret = Draw {
-            size: height * width * 4,
-            height,
-            width,
-            matrix: Vec::with_capacity(height * width * 4),
+    pub fn new(width: usize, height: usize, shader_manager: &mut ShaderManager) -> Self {
+        // Create primitives for each of the shapes we want to draw.
+        let mut rectangle = MeshData {
+            vertices: vec![
+                vec3(-1f32, -1.0, 0.0),
+                vec3(1., -1., 0.),
+                vec3(1., 1., 0.),
+                vec3(-1., 1., 0.),
+            ],
+            indices: vec![0, 1, 2, 3, 0],
+            ..Default::default()
         };
-        ret.matrix.resize(height * width * 4, 0);
-        ret
+        let mut points: Vec<Vector3<f32>> = Vec::new();
+        for i in 0..CIRCLE_RESOLUTION {
+            let angle = f32::consts::TAU * (i as f32) / (CIRCLE_RESOLUTION as f32);
+            let mut vect = vec3(angle.cos(), angle.sin(), 0.0);
+            points.push(vect);
+        }
+        let mut circle = MeshData {
+            vertices: points,
+            indices: (0..CIRCLE_RESOLUTION as u32).map(|i| i * 3).collect(),
+            ..Default::default()
+        };
+        rectangle.init();
+        circle.init();
+        let mut primitives = vec![Arc::new(rectangle), Arc::new(circle)];
+        Draw {
+            objects: vec![],
+            size: Vector2::new(100, 100),
+            shader: shader_manager.register(
+                Shader::from_source(
+                    include_str!("../shaders/drawing_shader.vert"),
+                    include_str!("../shaders/drawing_shader.frag"),
+                    "",
+                )
+                .unwrap(),
+            ),
+            primitives,
+        }
     }
     pub fn clear(&mut self) {
-        self.matrix.clear()
+        self.objects.clear();
+    }
+    fn add_object(&mut self, mut object: Object2d) {
+        self.objects.push(object);
+    }
+    pub fn rectangle(&mut self, point1: Vector2<f32>, point2: Vector2<f32>, color: [u8; 4]) {
+        let rect = Object2d {
+            color,
+            shader: self.shader.clone(),
+            mesh_data: self.primitives[0].clone(),
+            transform: Transform::with_position(point1.extend(0.0)),
+        };
+        self.add_object(rect);
     }
     pub fn fill(&mut self, color: [u8; 4]) {
-        // todo!("Speed this up with some kind of vector extension or something. Lazy loading? ")
-        for i in 0..self.size {
-            self.matrix[i] = color[i % 4];
-        }
+        self.rectangle(
+            Vector2::new(0.0, 0.0),
+            self.size.map(|it| it.to_f32().unwrap()),
+            color,
+        );
     }
-    pub fn line(&mut self, p1: [usize; 2], p2: [usize; 2], color: [u8; 4], width: usize) {
-        let lpoint = if p1[0] <= p2[0] { p1 } else { p2 };
+    pub fn line(&mut self, p1: Vector2<f32>, p2: Vector2<f32>, width: f32, color: [u8; 4]) {
+        let lpoint = if p1.x <= p2.x { p1 } else { p2 };
         let rpoint = if lpoint == p1 { p2 } else { p1 };
         println!("{}", lpoint == p1);
-        let lpoint: [i64; 2] = lpoint.map(usize::as_);
-        let rpoint: [i64; 2] = rpoint.map(usize::as_);
-        let length = rpoint[0] - lpoint[0];
-        let slope = (rpoint[1] - lpoint[1]) as f64 / (length as f64);
-        let mut y = ((lpoint[0]) as f64 + lpoint[1] as f64);
-        for i in 0..length {
-            y += slope;
-            for v in -(width as i32)..(width as i32) {
-                for c in 0..4 {
-                    let xcoord = lpoint[0] + i + c;
-                    let ycoord = y as i32 + v;
-                    // println!("{} {}", xcoord, ycoord);
-                    self.matrix[self.width * ycoord as usize + xcoord as usize] = color[c as usize];
-                    // TODO: solve the edge case when y + v goes outside the bounds.
-                }
-            }
-        }
+        let slope = (rpoint.y - lpoint.y) / (rpoint.x - lpoint.x);
+        // let inv_sqrt = (slope.powi(2) + 1.0).powf(-0.5);
+        // let high_y = - width * inv_sqrt;
+        // let high_x = high_y * -slope;
+        // let high_point = Vector2::new(high_x, high_y);
+        // let low_point = high_point * -1.0;
+        let length = (p2 - p1).magnitude();
+        let angle = slope.atan();
+
+        let mut line = Object2d {
+            color,
+            shader: self.shader.clone(),
+            mesh_data: self.primitives[0].clone(),
+            transform: Transform::with_position(lpoint.extend(0.0)),
+        };
+        line.rotate(0.0, 0.0, angle);
+        line.translate(lpoint.x, lpoint.y, 0.0);
+        self.add_object(line);
     }
-    pub fn circle(&mut self, center: [usize; 2], radius: usize, width: usize) {
-        let mut eighth: Vec<[usize; 2]> = Vec::new();
-        let mut x = radius as i32;
-        let mut t1 = x / 16;
-        let mut y = 0;
-        while x >= y {
-            eighth.push([x as usize, y as usize]);
-            y += 1;
-            t1 += y;
-            let t2 = t1 - x;
-            if (t2 >= 0) {
-                t1 = t2;
-                x -= 1;
-            }
-        }
-        let mut pixels: Vec<([usize; 2], [u8; 4])> = Vec::new();
-        for i in 0..eighth.len() {
-            for x in [-1, 1] {
-                for y in [-1, 1] {
-                    let p = [
-                        center[0] as i32 + eighth[i][0] as i32 * x,
-                        center[1] as i32 + eighth[i][1] as i32 * y,
-                    ];
-                }
-            }
-        }
+    pub fn circle(&mut self, center: Vector2<f32>, radius: f32, color: [u8; 4]) {
+        let circle = Object2d {
+            color,
+            shader: self.shader.clone(),
+            mesh_data: self.primitives[1].clone(),
+            transform: Transform::with_position(center.extend(0.0)),
+        };
+        self.add_object(circle);
     }
-    pub fn blit(&mut self, map: Vec<([usize; 2], [u8; 4])>) {
-        for (pos, color) in map {
-            for i in 0..4 {
-                self.matrix[self.width * pos[1] + pos[0] + i] = color[i]
-            }
-        }
-    }
-    pub fn debug_print(&self) {
-        for y in 0..self.height {
-            for x in 0..self.width {
-                print!("{:#.1} ", (self.matrix[self.width * y + x] as f64) / 255.)
-            }
-            println!()
-        }
-    }
-    pub fn transfer(&self, texture: usize) {
-        Shader::set_texture(texture, &self.matrix, self.width, self.height);
-    }
-    pub fn resize(&mut self, width: usize, height: usize) {
-        let oldmat = self.matrix.clone();
-        let oldwidth = self.width;
-        let oldheight = self.height;
-        self.width = width;
-        self.height = height;
-        self.matrix.resize(height * width * 4, 0);
-        self.matrix.fill(0);
-        for i in 0..(oldwidth * oldheight) {
-            self.matrix[i / oldwidth * self.width + i % oldwidth] = oldmat[i]
-        }
+    pub fn render(&mut self) -> Result<(), Box<dyn Error>> {
+        self.objects
+            .iter_mut()
+            .try_for_each(|object| object.render(None))
     }
 }

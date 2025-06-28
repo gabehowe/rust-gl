@@ -1,3 +1,13 @@
+use crate::derive_transformable;
+use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager, ShaderPtr};
+use crate::transformation::{Transform, Transformable};
+use crate::util::find_gl_error;
+use cgmath::{Matrix4, Vector2, Vector3};
+use gl::types::{GLenum, GLfloat, GLsizei, GLuint};
+use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, STATIC_DRAW, TRIANGLES, UNSIGNED_INT};
+use itertools::Itertools;
+use obj::raw::{parse_mtl, parse_obj};
+use obj::{FromRawVertex, TexturedVertex};
 use std::error::Error;
 use std::ffi::{c_float, c_uint};
 use std::fs::File;
@@ -6,182 +16,71 @@ use std::mem::size_of;
 use std::path::Path;
 use std::ptr::null;
 
-use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager};
-use crate::transformation::{Transformable, Transformation};
-use cgmath::{Euler, Matrix, Matrix4, One, Rad, Vector2, Vector3, Zero};
-use gl::types::{GLenum, GLfloat, GLsizei, GLuint};
-use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, STATIC_DRAW, TRIANGLES, UNSIGNED_INT};
-use itertools::Itertools;
-use obj::raw::{parse_mtl, parse_obj};
-use obj::{FromRawVertex, TexturedVertex};
-
 pub trait Render: Transformable {
-    fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>);
+    fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>>;
     fn is(&self) -> bool;
     fn set_is(&mut self, val: bool);
 }
-
-impl Render for Renderable {
-    fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>) {
-        if !self.is {
-            return;
-        }
-        let model = self.build_model();
-        let shader = shader_manager
-            .get_mut(shader_override.unwrap_or(self.shader))
-            .expect("Couldn't unwrap shader");
-        shader.use_shader();
-        shader.update().expect("Shader failed to update.");
-        shader.set(model, "model").expect("Couldn't set shader");
-
+#[derive(Default)]
+pub struct MeshData {
+    pub vertices: Vec<Vector3<f32>>,
+    pub indices: Vec<u32>,
+    pub vertex_array: GLuint,
+    pub vertex_buffer: GLuint,
+    pub element_buffer: GLuint,
+    pub tex_coords: Option<Vec<Vector2<f32>>>, // TODO: use general vertex attribs or some type of builder instead of explicitly supporting only these two.
+    pub normals: Option<Vec<Vector3<f32>>>,
+}
+impl MeshData {
+    pub fn init(&mut self) {
+        self.gen_buffers();
         unsafe {
             gl::BindVertexArray(self.vertex_array);
-
-            gl::DrawElements(
-                self.draw_type,
-                (self.indices.len() * size_of::<GLuint>()) as GLsizei,
-                UNSIGNED_INT,
-                null(),
-            );
-            gl::BindVertexArray(0); // Cleanup
         }
-        Shader::clear_shader();
+        self.init_array_buffers();
+        self.gen_vertex_attrib_arrays();
     }
-
-    fn is(&self) -> bool {
-        self.is
-    }
-
-    fn set_is(&mut self, val: bool) {
-        self.is = val;
-    }
-}
-impl Transformable for Renderable {
-    fn scale(&mut self, x: f32, y: f32, z: f32) {
-        self.scale.x *= x;
-        self.scale.y *= y;
-        self.scale.z *= z;
-    }
-    fn uniform_scale(&mut self, scale: f32) {
-        self.scale *= scale;
-    }
-    fn rotate(&mut self, x: f32, y: f32, z: f32) {
-        self.rotation += Vector3::new(x, y, z);
-    }
-    fn translate(&mut self, x: f32, y: f32, z: f32) {
-        self.translation += Vector3::new(x, y, z)
-    }
-}
-
-pub struct Renderable {
-    pub vertices: Vec<Vector3<c_float>>,
-    indices: Vec<c_uint>,
-    pub shader: usize,
-    vertex_array: GLuint,
-    vertex_buffer: GLuint,
-    element_buffer: GLuint,
-    pub rotation: Vector3<f32>,
-    pub translation: Vector3<f32>,
-    pub scale: Vector3<f32>,
-    normals: Vec<Vector3<f32>>,
-    tex_coords: Vec<Vector2<f32>>,
-    pub draw_type: GLenum,
-    is: bool,
-}
-
-impl Renderable {
-    pub(crate) fn new_with_tex(
-        vertices: Vec<Vector3<f32>>,
-        indices: Vec<u32>,
-        normals: Vec<Vector3<f32>>,
-        tex_coords: Vec<Vector2<f32>>,
-        shader: usize,
-    ) -> Renderable {
-        let mut ret = Renderable {
-            tex_coords,
-            ..Renderable::data_only(vertices, indices, normals, shader)
-        };
-        ret.new_fini();
-        return ret
-        // TODO: Should probably use Result here or smth.
-    }
-
-    pub fn new(
-        vertices: Vec<Vector3<f32>>,
-        indices: Vec<u32>,
-        normals: Vec<Vector3<f32>>,
-        shader: usize,
-    ) -> Renderable {
-        let mut ret = Self::data_only(vertices, indices, normals, shader);
-        ret.new_fini();
-        ret
-    }
-    pub(crate) fn data_only(
-        vertices: Vec<Vector3<f32>>,
-        indices: Vec<u32>,
-        normals: Vec<Vector3<f32>>,
-        shader: usize,
-    ) -> Renderable {
-        let mut ret = Renderable {
-            vertices,
-            indices,
-            shader,
-            vertex_array: 0,
-            vertex_buffer: 0,
-            element_buffer: 0,
-            rotation: Vector3::zero(),
-            translation: Vector3::zero(),
-            scale: Vector3::new(1., 1., 1.),
-            normals,
-            tex_coords: Vec::new(),
-            draw_type: TRIANGLES,
-            is: true,
-        };
-        ret
-    }
-    fn new_fini(&mut self){
+    fn gen_vertex_attrib_arrays(&mut self) {
+        let mut stride = (3 * size_of::<GLfloat>()) as GLsizei; // Vertices
+        let mut index = 0;
+        let mut offset = 0;
+        if self.normals.is_some() {
+            // add stride for normals
+            stride += 3 * size_of::<GLfloat>() as GLsizei;
+        }
+        if self.tex_coords.is_some() {
+            // add stride for tex coords
+            stride += (2 * size_of::<GLfloat>()) as GLsizei;
+        }
         unsafe {
-            self.gen_buffers();
-
-            gl::BindVertexArray(self.vertex_array);
-
-            self.init_array_buffers();
-
-            self.gen_vertex_attrib_arrays();
-            //
-            // gl::EnableVertexAttribArray(1);
-            // gl::VertexAttribPointer(1, 3, FLOAT, FALSE, (6 * size_of::<GLfloat>()) as GLsizei, (3 * size_of::<GLfloat>()) as *const _);
-
-            gl::BindBuffer(ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
+            gl::VertexAttribPointer(index, 3, FLOAT, FALSE, stride, null());
+            gl::EnableVertexAttribArray(index);
         }
-    }
-    unsafe fn gen_vertex_attrib_arrays(&mut self) {
-        let mut stride = 2 * (3 * size_of::<GLfloat>()) as GLsizei;
-        if !self.tex_coords.is_empty() {
-            stride = (2 * (3 * size_of::<GLfloat>()) + (2 * size_of::<GLfloat>())) as GLsizei;
+        offset += 3 * size_of::<GLfloat>() as GLsizei; // Next vertex attribute has this offset
+        index += 1;
+        if self.normals.is_some() {
+            unsafe {
+                gl::VertexAttribPointer(index, 3, FLOAT, FALSE, stride, offset as *const _);
+                gl::EnableVertexAttribArray(index);
+            }
+            offset += 3 * size_of::<GLfloat>() as GLsizei; // Next vertex attribute has this offset
+            index += 1;
         }
-        gl::VertexAttribPointer(0, 3, FLOAT, FALSE, stride, null());
-        gl::EnableVertexAttribArray(0);
-        gl::VertexAttribPointer(
-            1,
-            3,
-            FLOAT,
-            FALSE,
-            stride,
-            (3 * size_of::<GLfloat>()) as *const _,
-        );
-        gl::EnableVertexAttribArray(1);
-        if !self.tex_coords.is_empty() {
-            gl::VertexAttribPointer(
-                2,
-                2,
-                FLOAT,
-                FALSE,
-                stride,
-                (6 * size_of::<GLfloat>()) as *const _,
-            );
-            gl::EnableVertexAttribArray(2);
+        if self.tex_coords.is_some() {
+            unsafe {
+                gl::VertexAttribPointer(
+                    index, // Add one if normals exist
+                    2,
+                    FLOAT,
+                    FALSE,
+                    stride,
+                    offset as *const _,
+                );
+                gl::EnableVertexAttribArray(index);
+            }
+            // the index and pointer must be incremented for additional vertex attributes.
+            // index += 1;
+            // pointer += 2 * size_of::<GLfloat>() as GLsizei;
         }
     }
     fn gen_buffers(&mut self) {
@@ -212,38 +111,94 @@ impl Renderable {
             );
         }
     }
-    fn build_vertex_data(&mut self) -> Vec<c_float> {
+    fn build_vertex_data(&mut self) -> Vec<f32> {
         let mut vertex_data = Vec::new();
         for i in 0..self.vertices.len() {
             vertex_data.push(self.vertices[i].x);
             vertex_data.push(self.vertices[i].y);
             vertex_data.push(self.vertices[i].z);
-
-            vertex_data.push(self.normals[i].x);
-            vertex_data.push(self.normals[i].y);
-            vertex_data.push(self.normals[i].z);
-
-            if !self.tex_coords.is_empty() {
-                vertex_data.push(self.tex_coords[i].x);
-                vertex_data.push(self.tex_coords[i].y);
+            if let Some(d) = &self.normals {
+                vertex_data.push(d[i].x);
+                vertex_data.push(d[i].y);
+                vertex_data.push(d[i].z);
+            }
+            if let Some(d) = &self.tex_coords {
+                vertex_data.push(d[i].x);
+                vertex_data.push(d[i].y);
             }
         }
         vertex_data
     }
-    pub unsafe fn update_vertex_buffer(&mut self) {
+    fn update_vertex_buffer(&mut self) {
         let vertex_data = self.build_vertex_data();
-        gl::BindBuffer(ARRAY_BUFFER, self.vertex_buffer);
-        gl::BufferSubData(
-            ARRAY_BUFFER,
-            0,
-            (vertex_data.len() * size_of::<GLfloat>()) as isize,
-            vertex_data.as_ptr().cast(),
-        );
-        gl::BindBuffer(ARRAY_BUFFER, 0);
+        unsafe {
+            gl::BindBuffer(ARRAY_BUFFER, self.vertex_buffer);
+            gl::BufferSubData(
+                ARRAY_BUFFER,
+                0,
+                (vertex_data.len() * size_of::<GLfloat>()) as isize,
+                vertex_data.as_ptr().cast(),
+            );
+            gl::BindBuffer(ARRAY_BUFFER, 0);
+        }
     }
-    unsafe fn enable_texture(&mut self) {
-        // self.shader.setup_textures();
+}
+
+pub struct Renderable {
+    pub mesh_data: MeshData,
+    pub transform: Transform,
+    pub shader: ShaderPtr,
+    pub draw_type: GLenum,
+    is: bool,
+}
+impl Renderable {
+    /// Creates a new Renderable with the given vertices, indices, normals and shader.
+    pub(crate) fn new_with_tex(
+        vertices: Vec<Vector3<f32>>,
+        indices: Vec<u32>,
+        normals: Vec<Vector3<f32>>,
+        tex_coords: Vec<Vector2<f32>>,
+        shader: &ShaderPtr,
+    ) -> Renderable {
+        let mut ret = Self::only_data(vertices, indices, normals, shader);
+        ret.mesh_data.tex_coords = Some(tex_coords);
+        ret.mesh_data.init();
+        ret
     }
+
+    pub fn new(
+        vertices: Vec<Vector3<f32>>,
+        indices: Vec<u32>,
+        normals: Vec<Vector3<f32>>,
+        shader: &ShaderPtr,
+    ) -> Renderable {
+        let mut ret = Self::only_data(vertices, indices, normals, shader);
+        ret.mesh_data.init();
+        ret
+    }
+    fn only_data(
+        vertices: Vec<Vector3<f32>>,
+        indices: Vec<u32>,
+        normals: Vec<Vector3<f32>>,
+        shader: &ShaderPtr,
+    ) -> Renderable {
+        Renderable {
+            mesh_data: MeshData {
+                vertices,
+                indices,
+                vertex_array: 0,
+                vertex_buffer: 0,
+                element_buffer: 0,
+                normals: Some(normals),
+                tex_coords: None,
+            },
+            shader: shader.clone(),
+            transform: Transform::default(),
+            draw_type: TRIANGLES,
+            is: true,
+        }
+    }
+
     pub fn from_obj(
         path: &str,
         shaderpath: &str,
@@ -275,7 +230,7 @@ impl Renderable {
         .map_err(|_| "Couldn't parse mtl!")?;
         let mat =
             NarrowingMaterial::from_obj_mtl(raw_mtl.materials.get("Material.001").unwrap().clone());
-        let new_shader = mat.from_path(shaderpath)?;
+        let new_shader = mat.with_path(shaderpath)?;
 
         // let new_shader = Shader::load_from_path("shaders/comp_base_shader");
         Ok(Renderable::new_with_tex(
@@ -286,32 +241,34 @@ impl Renderable {
                 .iter()
                 .map(|x: &TexturedVertex| Vector2::new(x.texture[0], x.texture[1]))
                 .collect(),
-            manager.register(new_shader),
+            &manager.register(new_shader),
         ))
-        // let mut ret = Renderable::new(vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(), indices, vertices.iter().map(|x| Vector3::from_tex_vertex(x)).collect(),  new_shader);
-    }
-    fn build_model(&mut self) -> Matrix4<f32> {
-        let mut model = Matrix4::one();
-        model = model.scale(self.scale.x, self.scale.y, self.scale.z);
-        model = model * Matrix4::from_translation(self.translation);
-        model = model
-            * Matrix4::from(Euler::new(
-                Rad(self.rotation.x),
-                Rad(self.rotation.z),
-                Rad(self.rotation.y),
-            ));
-        // println!("{:?}", model);
-        model
     }
 }
-impl Render for Mesh {
-    fn render(&mut self, shader_manager: &mut ShaderManager, shader_override: Option<usize>) {
+impl Render for Renderable {
+    fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>> {
         if !self.is {
-            return
+            return Ok(());
         }
-        for i in 0..self.renderables.len() {
-            self.renderables[i].render(shader_manager, shader_override);
+        let model = self.transform.mat();
+        let mut shader = shader_override.as_ref().unwrap_or(&self.shader).borrow_mut();
+        shader.use_();
+        shader.update().expect("Shader failed to update.");
+        shader.set(model, "model").expect("Couldn't set shader");
+
+        unsafe {
+            gl::BindVertexArray(self.mesh_data.vertex_array);
+            find_gl_error()?;
+            gl::DrawElements(
+                self.draw_type,
+                (self.mesh_data.indices.len() * size_of::<GLuint>()) as GLsizei,
+                UNSIGNED_INT,
+                null(),
+            );
+            gl::BindVertexArray(0); // Cleanup
         }
+        Shader::clear_shader();
+        Ok(())
     }
 
     fn is(&self) -> bool {
@@ -322,53 +279,32 @@ impl Render for Mesh {
         self.is = val;
     }
 }
-impl Transformable for Mesh {
-    fn scale(&mut self, x: f32, y: f32, z: f32) {
-        for i in 0..self.renderables.len() {
-            self.renderables[i].scale(x, y, z);
-        }
-    }
-    fn uniform_scale(&mut self, scale: f32) {
-        for i in 0..self.renderables.len() {
-            self.renderables[i].uniform_scale(scale);
-        }
-    }
-    fn rotate(&mut self, x: f32, y: f32, z: f32) {
-        for i in 0..self.renderables.len() {
-            self.renderables[i].rotate(x, y, z);
-        }
-    }
-    fn translate(&mut self, x: f32, y: f32, z: f32) {
-        for i in 0..self.renderables.len() {
-            self.renderables[i].translate(x, y, z);
-        }
-    }
-}
-pub struct Mesh {
+derive_transformable!(Renderable);
+
+pub struct RenderableGroup {
     renderables: Vec<Renderable>,
-    is: bool
+    is: bool,
 }
-impl Mesh {
+impl RenderableGroup {
     pub fn from_gltf(
         path: &str,
         shaderpath: &str,
         shader_manager: &mut ShaderManager,
-    ) -> Result<Mesh, Box<dyn Error>> {
+    ) -> Result<RenderableGroup, Box<dyn Error>> {
         let mut ancestors = Path::new(path).ancestors().to_owned();
         let mut base = "";
         ancestors.next();
         if let Some(root) = ancestors.next() {
             base = root.to_str().expect("Should be a string.");
         }
-        
+
         let (document, buffers, images) = gltf::import(path)?;
-            
-        
+
         let mut renderables: Vec<Renderable> = Vec::new();
-        let mut materials: Vec<usize> = Vec::new();
+        let mut materials: Vec<ShaderPtr> = Vec::new();
         for i in document.materials() {
             let mat = NarrowingMaterial::from_gltf_mtl(i, &images, &buffers, base)?;
-            materials.push(shader_manager.register(mat.from_path(shaderpath)?));
+            materials.push(shader_manager.register(mat.with_path(shaderpath)?));
         }
         for mesh in document.meshes() {
             for primitive in mesh.primitives() {
@@ -384,14 +320,17 @@ impl Mesh {
                     .collect(); //TODO: add multiple sets
                 let normals: Vec<Vector3<c_float>> =
                     reader.read_normals().unwrap().map_into().collect();
-                let material = materials[primitive.material().index().unwrap()];
+                let material = materials[primitive.material().index().unwrap()].clone();
 
                 renderables.push(Renderable::new_with_tex(
-                    vertices, indices, normals, tex_coords, material,
+                    vertices, indices, normals, tex_coords, &material,
                 ));
             }
         }
-        Ok(Mesh { renderables, is: true })
+        Ok(RenderableGroup {
+            renderables,
+            is: true,
+        })
     }
     pub fn create_grid(
         width: u32,
@@ -424,5 +363,47 @@ impl Mesh {
             }
         }
         (vertices, indices, normals)
+    }
+}
+
+impl Render for RenderableGroup {
+    fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>> {
+        if !self.is {
+            return Ok(());
+        }
+        self.renderables.iter_mut().try_for_each(|r| {
+            let shader = shader_override.as_ref().map(|x| x.clone());
+            r.render(shader)
+        })
+    }
+
+    fn is(&self) -> bool {
+        self.is
+    }
+
+    fn set_is(&mut self, val: bool) {
+        self.is = val;
+    }
+}
+impl Transformable for RenderableGroup {
+    fn scale(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].scale(x, y, z);
+        }
+    }
+    fn uniform_scale(&mut self, scale: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].uniform_scale(scale);
+        }
+    }
+    fn rotate(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].rotate(x, y, z);
+        }
+    }
+    fn translate(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].translate(x, y, z);
+        }
     }
 }
