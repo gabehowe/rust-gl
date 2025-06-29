@@ -33,6 +33,7 @@ pub mod renderable;
 pub mod shader;
 pub mod transformation;
 pub mod util;
+mod glutil;
 
 pub const HEIGHT: usize = 1000;
 pub const WIDTH: usize = HEIGHT * 16 / 9;
@@ -49,6 +50,7 @@ pub struct Data {
     wireframe_shader: ShaderPtr,
     pub shader_manager: ShaderManager,
     pub frame_buffer_texture: Option<(u32, u32)>,
+    pub should_clear: bool
 }
 
 impl Data {
@@ -58,8 +60,10 @@ impl Data {
     fn render(&mut self, wireframe: bool) -> Result<(), Box<dyn Error>> {
         // Safety: We know that the key is a valid key because we are using the glfw::Key enum.
         unsafe {
-            gl::ClearColor(CLEARCOLOR.0, CLEARCOLOR.1, CLEARCOLOR.2, CLEARCOLOR.3);
-            gl::Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
+            if self.should_clear {
+                gl::ClearColor(CLEARCOLOR.0, CLEARCOLOR.1, CLEARCOLOR.2, CLEARCOLOR.3);
+                gl::Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
+            }
         }
         self.camera.update_buffers(); // Only needs to be updated if it changes. TODO: Optimization?
         for i in self.renderables.iter_mut().map(|x| x.try_borrow_mut()) {
@@ -238,6 +242,7 @@ impl Engine {
                 shader_manager,
                 wireframe_shader: wireframe_id,
                 frame_buffer_texture: None,
+                should_clear: true
             },
             event_handler,
             frame_index: 0,

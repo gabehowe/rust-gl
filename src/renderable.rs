@@ -1,4 +1,6 @@
 use crate::derive_transformable;
+use crate::glutil;
+use crate::glutil::{BufferObject, GLBuffer, GLObject, VertexArrayObject, VAA};
 use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager, ShaderPtr};
 use crate::transformation::{Transform, Transformable};
 use crate::util::find_gl_error;
@@ -21,96 +23,151 @@ pub trait Render: Transformable {
     fn is(&self) -> bool;
     fn set_is(&mut self, val: bool);
 }
-#[derive(Default)]
+pub struct InstancedObject {
+    children: MeshData,
+    transforms: Vec<Transform>,
+    colors: Vec<[f32; 4]>,
+    shader: ShaderPtr,
+}
+impl InstancedObject {
+    pub fn new(
+        vertices: Vec<Vector3<f32>>,
+        indices: Vec<u32>,
+        normals: Vec<Vector3<f32>>,
+        shader: &ShaderPtr,
+        transforms: Vec<Transform>,
+        colors: Vec<[f32; 4]>,
+    ) -> Self {
+        let mut ret = Self {
+            children: MeshData::new(vertices, indices, Some(normals), None),
+            shader: shader.clone(),
+            transforms,
+            colors,
+        };
+        ret.children
+            .vertex_array
+            .vbos
+            .push(BufferObject::new(ARRAY_BUFFER));
+        ret.children
+            .vertex_array
+            .vbos
+            .push(BufferObject::new(ARRAY_BUFFER));
+        // ret.children.init().expect("Failed to initialize.");
+        unsafe {
+            // TODO: find a way to modify the data.
+            let vertex_data = ret.children.build_vertex_data();
+            let structure = vec![
+                VAA::new(FLOAT, 3), // Pos
+                VAA::new(FLOAT, 3), // Normal
+                VAA::new(FLOAT, 4), // Matrix row 1
+                VAA::new(FLOAT, 4), // Matrix row 2
+                VAA::new(FLOAT, 4), // Matrix row 3
+                VAA::new(FLOAT, 4), // Matrix row 4
+                VAA::new(FLOAT, 4), // Color
+            ];
+            ret.children.vertex_array.generate().expect("Failed to generate VAO");
+            ret.children.vertex_array.vbos[0]
+                .buffer_data(vertex_data.as_slice(), STATIC_DRAW)
+                .expect("Failed to buffer vertex data");
+            ret.children
+                .vertex_array
+                .ebo
+                .buffer_data(ret.children.indices.as_slice(), STATIC_DRAW)
+                .expect("Failed to buffer index data");
+            
+            // Buffer transform matrices
+            ret.children.vertex_array.vbos[1]
+                .buffer_data(
+                    ret.transforms
+                        .iter()
+                        .map(|it| it.mat())
+                        .collect_vec()
+                        .as_slice(),
+                    STATIC_DRAW,
+                )
+                .expect("Failed to buffer transform data");
+            
+            // Buffer colors
+            ret.children.vertex_array.vbos[2]
+                .buffer_data(
+                    ret.colors.as_slice(),
+                    STATIC_DRAW,
+                )
+                .expect("Failed to buffer color data");
+            
+            ret.children.vertex_array.configure(structure).expect("couldn't configure");
+            
+            // Set up instancing divisors
+            gl::VertexArrayBindingDivisor(ret.children.vertex_array.vbos[1].id, 1, 1); // Transform matrices
+            gl::VertexArrayBindingDivisor(ret.children.vertex_array.vbos[2].id, 2, 1); // Colors
+        }
+        ret
+    }
+    
+    pub fn render(&mut self) -> Result<(), Box<dyn Error>> {
+        if self.transforms.is_empty() {
+            return Ok(());
+        }
+        
+        let mut shader = self.shader.borrow_mut();
+        shader.use_();
+        shader.update().expect("Shader failed to update.");
+        
+        unsafe {
+            self.children.vertex_array.bind();
+            gl::DrawElementsInstanced(
+                gl::TRIANGLES,
+                self.children.indices.len() as GLsizei,
+                gl::UNSIGNED_INT,
+                null(),
+                self.transforms.len() as GLsizei,
+            );
+            self.children.vertex_array.unbind();
+        }
+        
+        Ok(())
+    }
+}
 pub struct MeshData {
     pub vertices: Vec<Vector3<f32>>,
     pub indices: Vec<u32>,
-    pub vertex_array: GLuint,
-    pub vertex_buffer: GLuint,
-    pub element_buffer: GLuint,
+    pub vertex_array: VertexArrayObject,
     pub tex_coords: Option<Vec<Vector2<f32>>>, // TODO: use general vertex attribs or some type of builder instead of explicitly supporting only these two.
     pub normals: Option<Vec<Vector3<f32>>>,
 }
 impl MeshData {
-    pub fn init(&mut self) {
-        self.gen_buffers();
-        unsafe {
-            gl::BindVertexArray(self.vertex_array);
+    pub fn new(
+        vertices: Vec<Vector3<f32>>,
+        indices: Vec<u32>,
+        normals: Option<Vec<Vector3<f32>>>,
+        tex_coords: Option<Vec<Vector2<f32>>>,
+    ) -> MeshData {
+        MeshData {
+            vertices,
+            indices,
+            tex_coords,
+            normals,
+            vertex_array: VertexArrayObject::new(),
         }
-        self.init_array_buffers();
-        self.gen_vertex_attrib_arrays();
     }
-    fn gen_vertex_attrib_arrays(&mut self) {
-        let mut stride = (3 * size_of::<GLfloat>()) as GLsizei; // Vertices
-        let mut index = 0;
-        let mut offset = 0;
+    pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
+        let vertex_data = self.build_vertex_data();
+        let mut structure = vec![VAA::new(FLOAT, 3)];
         if self.normals.is_some() {
-            // add stride for normals
-            stride += 3 * size_of::<GLfloat>() as GLsizei;
+            structure.push(VAA::new(FLOAT, 3))
         }
         if self.tex_coords.is_some() {
-            // add stride for tex coords
-            stride += (2 * size_of::<GLfloat>()) as GLsizei;
+            structure.push(VAA::new(FLOAT, 3));
         }
-        unsafe {
-            gl::VertexAttribPointer(index, 3, FLOAT, FALSE, stride, null());
-            gl::EnableVertexAttribArray(index);
-        }
-        offset += 3 * size_of::<GLfloat>() as GLsizei; // Next vertex attribute has this offset
-        index += 1;
-        if self.normals.is_some() {
-            unsafe {
-                gl::VertexAttribPointer(index, 3, FLOAT, FALSE, stride, offset as *const _);
-                gl::EnableVertexAttribArray(index);
-            }
-            offset += 3 * size_of::<GLfloat>() as GLsizei; // Next vertex attribute has this offset
-            index += 1;
-        }
-        if self.tex_coords.is_some() {
-            unsafe {
-                gl::VertexAttribPointer(
-                    index, // Add one if normals exist
-                    2,
-                    FLOAT,
-                    FALSE,
-                    stride,
-                    offset as *const _,
-                );
-                gl::EnableVertexAttribArray(index);
-            }
-            // the index and pointer must be incremented for additional vertex attributes.
-            // index += 1;
-            // pointer += 2 * size_of::<GLfloat>() as GLsizei;
-        }
+        self.vertex_array.generate()?;
+        self.vertex_array.vbos[0].buffer_data(vertex_data.as_slice(), STATIC_DRAW)?;
+        self.vertex_array
+            .ebo
+            .buffer_data(self.indices.as_slice(), STATIC_DRAW)?;
+        self.vertex_array.configure(structure)?;
+        Ok(())
     }
-    fn gen_buffers(&mut self) {
-        unsafe {
-            gl::GenBuffers(1, &mut self.vertex_buffer);
-            gl::GenVertexArrays(1, &mut self.vertex_array);
-            gl::GenBuffers(1, &mut self.element_buffer);
-        }
-    }
-    fn init_array_buffers(&mut self) {
-        let mut vertex_data = self.build_vertex_data();
-        unsafe {
-            gl::BindBuffer(ARRAY_BUFFER, self.vertex_buffer);
-            let size = (vertex_data.len() * size_of::<GLfloat>()) as isize;
-            gl::BufferData(
-                ARRAY_BUFFER,
-                size,
-                vertex_data.as_mut_ptr().cast(),
-                STATIC_DRAW,
-            );
 
-            gl::BindBuffer(ELEMENT_ARRAY_BUFFER, self.element_buffer);
-            gl::BufferData(
-                ELEMENT_ARRAY_BUFFER,
-                (self.indices.len() * size_of::<GLuint>()) as isize,
-                self.indices.as_mut_ptr().cast(),
-                STATIC_DRAW,
-            );
-        }
-    }
     fn build_vertex_data(&mut self) -> Vec<f32> {
         let mut vertex_data = Vec::new();
         for i in 0..self.vertices.len() {
@@ -125,6 +182,7 @@ impl MeshData {
             if let Some(d) = &self.tex_coords {
                 vertex_data.push(d[i].x);
                 vertex_data.push(d[i].y);
+                vertex_data.push(0.0)
             }
         }
         vertex_data
@@ -170,15 +228,7 @@ impl Renderable {
         shader: &ShaderPtr,
     ) -> Renderable {
         Renderable {
-            mesh_data: MeshData {
-                vertices,
-                indices,
-                vertex_array: 0,
-                vertex_buffer: 0,
-                element_buffer: 0,
-                normals: Some(normals),
-                tex_coords: None,
-            },
+            mesh_data: MeshData::new(vertices, indices, Some(normals), None),
             shader: shader.clone(),
             transform: Transform::default(),
             draw_type: TRIANGLES,
@@ -238,13 +288,17 @@ impl Render for Renderable {
             return Ok(());
         }
         let model = self.transform.mat();
-        let mut shader = shader_override.as_ref().unwrap_or(&self.shader).borrow_mut();
+        let mut shader = shader_override
+            .as_ref()
+            .unwrap_or(&self.shader)
+            .borrow_mut();
         shader.use_();
         shader.update().expect("Shader failed to update.");
         shader.set(model, "model").expect("Couldn't set shader");
 
         unsafe {
-            gl::BindVertexArray(self.mesh_data.vertex_array);
+            // gl::BindVertexArray(self.mesh_data.vertex_array);
+            self.mesh_data.vertex_array.bind();
             find_gl_error()?;
             gl::DrawElements(
                 self.draw_type,
@@ -252,7 +306,8 @@ impl Render for Renderable {
                 UNSIGNED_INT,
                 null(),
             );
-            gl::BindVertexArray(0); // Cleanup
+            self.mesh_data.vertex_array.unbind();
+            // gl::BindVertexArray(0); // Cleanup
         }
         Shader::clear_shader();
         Ok(())

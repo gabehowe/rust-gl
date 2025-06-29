@@ -1,7 +1,10 @@
+use std::backtrace::Backtrace;
 use std::ffi::{CStr, CString};
 use std::fmt;
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
+use log::debug;
 
 pub extern "system" fn debug_log(
     _: gl::types::GLenum,
@@ -31,7 +34,10 @@ pub fn load_file(path: String) -> CString {
 pub fn find_gl_error() -> Result<(), GLFunctionError> {
     let error = unsafe { gl::GetError() };
     if error != gl::NO_ERROR {
-        Err(GLFunctionError::new(error.to_string()))
+        let msg = format!("{} \n {}", error, Backtrace::capture());
+        debug!("{}", msg);
+
+        Err(GLFunctionError::new(msg))
     } else {
         Ok(())
     }
