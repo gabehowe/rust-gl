@@ -5,7 +5,8 @@ Render the vector objects
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features, unused)]
 
-use crate::derive_transformable;
+use std::cell::RefCell;
+use crate::{derive_transformable, new_renderable_ptr, Engine, RenderablePtr};
 use crate::renderable::{MeshData, Render, Renderable};
 use crate::shader::{
     MaybeColorTexture, NarrowingMaterial, SetValue, Shader, ShaderManager, ShaderPtr,
@@ -24,9 +25,9 @@ use std::ptr::null;
 use std::sync::Arc;
 
 derive_transformable!(Object2d);
-struct Object2d {
-    color: [u8; 4],
-    transform: Transform,
+pub struct Object2d { // TODO: make not public
+    color: [f32; 4],
+    pub transform: Transform,
     shader: ShaderPtr,
     mesh_data: Arc<MeshData>,
 }
@@ -36,7 +37,7 @@ impl Render for Object2d {
         let mut shader = self.shader.try_borrow_mut()?;
         shader.use_();
         shader.set(self.transform.mat(), "model");
-        shader.set(self.color.map(|x| x as u32).to_vec(), "color");
+        shader.set(self.color.to_vec(), "color");
         unsafe {
             gl::BindVertexArray(self.mesh_data.vertex_array);
             gl::DrawElements(
@@ -59,22 +60,22 @@ impl Render for Object2d {
 }
 
 pub struct Draw {
-    objects: Vec<Object2d>,
+    objects: Vec<Arc<RefCell<Box<dyn Render>>>>, // TODO: Make not public
     size: Vector2<u32>,
     shader: ShaderPtr,
-    primitives: Vec<Arc<MeshData>>,
+    primitives: Vec<Arc<MeshData>>
 }
 const CIRCLE_RESOLUTION: usize = 50;
 
 impl Draw {
-    pub fn new(width: usize, height: usize, shader_manager: &mut ShaderManager) -> Self {
+    pub fn new(width: usize, height: usize, engine: &mut Engine) -> Draw {
         // Create primitives for each of the shapes we want to draw.
         let mut rectangle = MeshData {
             vertices: vec![
-                vec3(-1f32, -1.0, 0.0),
-                vec3(1., -1., 0.),
-                vec3(1., 1., 0.),
-                vec3(-1., 1., 0.),
+                vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 1.0, 0.0),
+                vec3(1.0, 1.0, 0.0),
+                vec3(1.0, 0.0, 0.0),
             ],
             indices: vec![0, 1, 2, 3, 0],
             ..Default::default()
@@ -96,49 +97,45 @@ impl Draw {
         Draw {
             objects: vec![],
             size: Vector2::new(100, 100),
-            shader: shader_manager.register(
+            shader: engine.data.shader_manager.register(
                 Shader::from_source(
                     include_str!("../shaders/drawing_shader.vert"),
                     include_str!("../shaders/drawing_shader.frag"),
                     "",
                 )
-                .unwrap(),
+                    .unwrap(),
             ),
-            primitives,
+            primitives
         }
     }
     pub fn clear(&mut self) {
         self.objects.clear();
     }
-    fn add_object(&mut self, mut object: Object2d) {
-        self.objects.push(object);
+    fn add_object(&mut self, mut object: Object2d) -> Arc<RefCell<Box<dyn Render>>> {
+        let rptr: Arc<RefCell<Box<dyn Render>>> = new_renderable_ptr(object);
+        self.objects.push(rptr.clone());
+        rptr
     }
-    pub fn rectangle(&mut self, point1: Vector2<f32>, point2: Vector2<f32>, color: [u8; 4]) {
+    pub fn rectangle(&mut self, point1: Vector2<f32>, point2: Vector2<f32>, color: [f32; 4]) -> Arc<RefCell<Box<dyn Render>>> {
         let rect = Object2d {
             color,
             shader: self.shader.clone(),
             mesh_data: self.primitives[0].clone(),
             transform: Transform::with_position(point1.extend(0.0)),
         };
-        self.add_object(rect);
+        self.add_object(rect)
     }
-    pub fn fill(&mut self, color: [u8; 4]) {
+    pub fn fill(&mut self, color: [f32; 4]) {
         self.rectangle(
             Vector2::new(0.0, 0.0),
             self.size.map(|it| it.to_f32().unwrap()),
             color,
         );
     }
-    pub fn line(&mut self, p1: Vector2<f32>, p2: Vector2<f32>, width: f32, color: [u8; 4]) {
+    pub fn line(&mut self, p1: Vector2<f32>, p2: Vector2<f32>, width: f32, color: [f32; 4]) -> Arc<RefCell<Box<dyn Render>>> {
         let lpoint = if p1.x <= p2.x { p1 } else { p2 };
         let rpoint = if lpoint == p1 { p2 } else { p1 };
-        println!("{}", lpoint == p1);
         let slope = (rpoint.y - lpoint.y) / (rpoint.x - lpoint.x);
-        // let inv_sqrt = (slope.powi(2) + 1.0).powf(-0.5);
-        // let high_y = - width * inv_sqrt;
-        // let high_x = high_y * -slope;
-        // let high_point = Vector2::new(high_x, high_y);
-        // let low_point = high_point * -1.0;
         let length = (p2 - p1).magnitude();
         let angle = slope.atan();
 
@@ -148,22 +145,25 @@ impl Draw {
             mesh_data: self.primitives[0].clone(),
             transform: Transform::with_position(lpoint.extend(0.0)),
         };
-        line.rotate(0.0, 0.0, angle);
+        line.scale(length,  width * 0.01, 1.0);
+        line.rotate(0.0, angle, 0.0);
         line.translate(lpoint.x, lpoint.y, 0.0);
-        self.add_object(line);
+        self.add_object(line)
     }
-    pub fn circle(&mut self, center: Vector2<f32>, radius: f32, color: [u8; 4]) {
-        let circle = Object2d {
+    pub fn circle(&mut self, center: Vector2<f32>, radius: f32, color: [f32; 4]) -> Arc<RefCell<Box<dyn Render>>> {
+        let mut circle = Object2d {
             color,
             shader: self.shader.clone(),
             mesh_data: self.primitives[1].clone(),
             transform: Transform::with_position(center.extend(0.0)),
         };
-        self.add_object(circle);
+        circle.set_uniform_scale(radius * 0.01);
+        circle.set_translation(center.x, center.y, 0.0);
+        self.add_object(circle)
     }
     pub fn render(&mut self) -> Result<(), Box<dyn Error>> {
         self.objects
             .iter_mut()
-            .try_for_each(|object| object.render(None))
+            .try_for_each(|object| object.borrow_mut().render(None))
     }
 }

@@ -3,10 +3,7 @@ use std::mem::size_of;
 use std::ptr::null;
 
 use crate::util::find_gl_error;
-use cgmath::{
-    perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, One, Point3, Rad, Vector2,
-    Vector3, Zero,
-};
+use cgmath::{perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, One, Point3, Rad, SquareMatrix, Vector2, Vector3, Zero};
 use gl::types::{GLsizeiptr, GLuint};
 use gl::{STATIC_DRAW, UNIFORM_BUFFER};
 use imgui::sys::cty::c_double;
@@ -27,6 +24,19 @@ macro_rules! derive_transformable {
             fn translate(&mut self, x: f32, y: f32, z: f32) {
                 self.transform.translate(x, y, z);
             }
+            fn set_scale(&mut self, x: f32, y: f32, z: f32) {
+                self.transform.set_scale(x, y, z);
+            }
+            fn set_rotation(&mut self, x: f32, y: f32, z: f32) {
+                self.transform.set_rotation(x, y, z);
+            }
+            fn set_translation(&mut self, x: f32, y: f32, z: f32) {
+                self.transform.set_translation(x, y, z);
+            }
+            fn set_uniform_scale(&mut self, scale: f32) {
+                self.transform.set_uniform_scale(scale);
+            }
+
         }
     };
 }
@@ -64,16 +74,14 @@ impl Transform {
     }
 
     pub fn mat(&self) -> Matrix4<f32> {
-        let mut model = Matrix4::one();
-        model = model * Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z);
-        model = model * Matrix4::from_translation(self.position);
-        model = model
-            * Matrix4::from(Euler::new(
+        let translation =Matrix4::from_translation(self.position);
+        let scale = Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z);
+        let rotation = Matrix4::from(Euler::new(
                 Rad(self.rotation.x),
                 Rad(self.rotation.z),
                 Rad(self.rotation.y),
             ));
-        model
+        translation * rotation * scale
     }
 }
 
@@ -101,6 +109,27 @@ impl Transformable for Transform {
     fn translate(&mut self, x: f32, y: f32, z: f32) {
         self.position += Vector3::new(x, y, z);
     }
+
+    fn set_scale(&mut self, x: f32, y: f32, z: f32) {
+        self.scale.x = x;
+        self.scale.y = y;
+        self.scale.z = z;
+    }
+    fn set_uniform_scale(&mut self, scale: f32) {
+        self.scale.x = scale;
+        self.scale.y = scale;
+        self.scale.z = scale;
+    }
+    fn set_rotation(&mut self, x: f32, y: f32, z: f32) {
+        self.rotation.x = x;
+        self.rotation.y = y;
+        self.rotation.z = z;
+    }
+    fn set_translation(&mut self, x: f32, y: f32, z: f32) {
+        self.position.x = x;
+        self.position.y = y;
+        self.position.z = z;
+    }
 }
 
 /*pub trait Transformation {
@@ -115,6 +144,10 @@ pub trait Transformable {
     fn uniform_scale(&mut self, scale: f32);
     fn rotate(&mut self, x: f32, y: f32, z: f32);
     fn translate(&mut self, x: f32, y: f32, z: f32);
+    fn set_scale(&mut self, x: f32, y: f32, z: f32);
+    fn set_uniform_scale(&mut self, scale: f32);
+    fn set_rotation(&mut self, x: f32, y: f32, z: f32);
+    fn set_translation(&mut self, x: f32, y: f32, z: f32);
 }
 
 /*impl Transformation for Matrix4<f32> {
@@ -190,6 +223,9 @@ impl Camera {
             Point3::from_vec(self.pos + self.front),
             Vector3::unit_y(),
         )
+    }
+    pub fn update_projection(&mut self, aspect: f32) {
+        self.projection = perspective(Deg(100.0), aspect, 0.01, 1000.0);
     }
 
     pub fn update_vectors(&mut self) {

@@ -129,19 +129,6 @@ impl MeshData {
         }
         vertex_data
     }
-    fn update_vertex_buffer(&mut self) {
-        let vertex_data = self.build_vertex_data();
-        unsafe {
-            gl::BindBuffer(ARRAY_BUFFER, self.vertex_buffer);
-            gl::BufferSubData(
-                ARRAY_BUFFER,
-                0,
-                (vertex_data.len() * size_of::<GLfloat>()) as isize,
-                vertex_data.as_ptr().cast(),
-            );
-            gl::BindBuffer(ARRAY_BUFFER, 0);
-        }
-    }
 }
 
 pub struct Renderable {
@@ -404,6 +391,30 @@ impl Transformable for RenderableGroup {
     fn translate(&mut self, x: f32, y: f32, z: f32) {
         for i in 0..self.renderables.len() {
             self.renderables[i].translate(x, y, z);
+        }
+    }
+
+    fn set_scale(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].set_scale(x, y, z);
+        }
+    }
+
+    fn set_uniform_scale(&mut self, scale: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].set_uniform_scale(scale);
+        }
+    }
+
+    fn set_rotation(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].set_rotation(x, y, z);
+        }
+    }
+
+    fn set_translation(&mut self, x: f32, y: f32, z: f32) {
+        for i in 0..self.renderables.len() {
+            self.renderables[i].set_translation(x, y, z);
         }
     }
 }

@@ -2,6 +2,7 @@ extern crate gl;
 
 pub use cgmath;
 pub use glfw;
+pub use imgui;
 use std::cell::RefCell;
 
 // use transformation::Transformation;
@@ -61,9 +62,8 @@ impl Data {
             gl::Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
         }
         self.camera.update_buffers(); // Only needs to be updated if it changes. TODO: Optimization?
-        for i in self.renderables.iter_mut() {
-            i.try_borrow_mut()?
-                .render(wireframe.then(|| self.wireframe_shader.clone()))?;
+        for i in self.renderables.iter_mut().map(|x| x.try_borrow_mut()) {
+            i?.render(wireframe.then(|| self.wireframe_shader.clone()))?;
         }
         Ok(())
     }
@@ -74,6 +74,9 @@ impl Data {
         let arc = Arc::new(RefCell::new(renderable));
         self.renderables.push(arc.clone());
         Ok(arc.clone())
+    }
+    pub fn add_renderable_rc(&mut self, rc: &RenderablePtr) {
+        self.renderables.push(rc.clone());
     }
     pub fn add_renderable_from_obj(
         &mut self,
@@ -189,8 +192,14 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn add_renderable(&mut self, renderable: Box<dyn Render>) -> Result<RenderablePtr, Box<dyn Error>> {
+    pub fn add_renderable(
+        &mut self,
+        renderable: Box<dyn Render>,
+    ) -> Result<RenderablePtr, Box<dyn Error>> {
         self.data.add_renderable(renderable)
+    }
+    pub fn add_renderable_rc(&mut self, renderable: &RenderablePtr){
+        self.data.add_renderable_rc(renderable)
     }
     pub fn new(imgui: bool, window_name: &str) -> Result<Engine, Box<dyn Error>> {
         let (glfw, mut window, events) = init_gflw(window_name);
@@ -256,7 +265,7 @@ impl Engine {
             .save(path)
             .expect("Failed to save image.");
     }
-    pub fn set_cursor_mode(&mut self, cursor_mode: CursorMode){
+    pub fn set_cursor_mode(&mut self, cursor_mode: CursorMode) {
         self.window.set_cursor_mode(cursor_mode);
     }
 
@@ -285,7 +294,9 @@ impl Engine {
         self.frame_index += 1;
 
         self.data.handle_input(&self.window, self.frametime);
-        self.data.render(self.event_handler.wireframe).expect("failed to render.");
+        self.data
+            .render(self.event_handler.wireframe)
+            .expect("failed to render.");
         // Allow for disabling imgui
         if self.event_handler.imgui.is_some() && self.event_handler.show_imgui {
             let imgui_glfw_ref = self.event_handler.imgui_glfw.as_mut().unwrap();
@@ -327,6 +338,7 @@ impl Engine {
                 WindowEvent::FramebufferSize(width, height) => unsafe {
                     gl::Viewport(0, 0, width, height);
                     self.size = [width as usize, height as usize];
+                    self.data.camera.update_projection((width as f32) / (height as f32))
                 },
                 WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
                     self.window.set_should_close(true);

@@ -86,6 +86,7 @@ fn main() {
     let renderable = engine
         .data
         .add_renderable_from_obj("objects/chapel.obj", "shaders/base_shader" ).expect("Couldn't create object.");
+    // TODO: Implement async loading
     renderable.borrow_mut().uniform_scale(0.1);
     renderable.borrow_mut().translate(20., 0.0, 0.0);
     let mut staggered_frametime = 0.0;
