@@ -1,9 +1,9 @@
-use cgmath::{perspective, vec3, Deg, Vector2, Vector3, Zero};
+use cgmath::{vec3, Vector3, Zero};
 use glfw::CursorMode;
 use imgui::{Condition, Ui};
 use rust_gl::shader::SetValue;
 
-use rust_gl::renderable::{Renderable, RenderableGroup};
+use rust_gl::renderable::Renderable;
 use rust_gl::transformation::Transformable;
 use rust_gl::{Data, Engine};
 
@@ -31,7 +31,7 @@ fn main() {
     let mut debug_axes = Renderable::new(
         px_grid.0,
         px_grid.1,
-        px_grid.2,
+        Some(px_grid.2),
         &engine.data.shader_manager.load_from_path("shaders/orientation_shader").expect("Failed to load shader."),
     );
     debug_axes.shader.borrow_mut().set(vec![ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set color for debug axes.");

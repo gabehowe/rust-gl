@@ -35,8 +35,7 @@ pub fn find_gl_error() -> Result<(), GLFunctionError> {
     let error = unsafe { gl::GetError() };
     if error != gl::NO_ERROR {
         let msg = format!("{} \n {}", error, Backtrace::capture());
-        debug!("{}", msg);
-
+        // debug!("{}", msg);
         Err(GLFunctionError::new(msg))
     } else {
         Ok(())

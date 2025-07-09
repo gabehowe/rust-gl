@@ -29,17 +29,17 @@ use transformation::Camera;
 use util::debug_log;
 
 pub mod drawing;
+mod glutil;
 pub mod renderable;
 pub mod shader;
 pub mod transformation;
 pub mod util;
-mod glutil;
 
 pub const HEIGHT: usize = 1000;
 pub const WIDTH: usize = HEIGHT * 16 / 9;
 const MOVESPEED: f32 = 2.5;
 const ROTATIONSPEED: f32 = 2.5;
-pub(crate) const CLEARCOLOR: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
+pub(crate) const CLEARCOLOR: (f32, f32, f32, f32) = (0.1, 0.0, 0.0, 1.0);
 type RenderablePtr = Arc<RefCell<Box<dyn Render>>>;
 fn new_renderable_ptr<T: Render + 'static>(renderable: T) -> RenderablePtr {
     Arc::new(RefCell::new(Box::new(renderable)))
@@ -50,7 +50,7 @@ pub struct Data {
     wireframe_shader: ShaderPtr,
     pub shader_manager: ShaderManager,
     pub frame_buffer_texture: Option<(u32, u32)>,
-    pub should_clear: bool
+    pub should_clear: bool,
 }
 
 impl Data {
@@ -202,7 +202,7 @@ impl Engine {
     ) -> Result<RenderablePtr, Box<dyn Error>> {
         self.data.add_renderable(renderable)
     }
-    pub fn add_renderable_rc(&mut self, renderable: &RenderablePtr){
+    pub fn add_renderable_rc(&mut self, renderable: &RenderablePtr) {
         self.data.add_renderable_rc(renderable)
     }
     pub fn new(imgui: bool, window_name: &str) -> Result<Engine, Box<dyn Error>> {
@@ -219,7 +219,7 @@ impl Engine {
         }
         let mut shader_manager = ShaderManager::new();
         let mat = NarrowingMaterial {
-            diffuse: Some(MaybeColorTexture::RGBA([0.5, 0.5, 0.5, 1.0])),
+            diffuse: Some(MaybeColorTexture::RGBA([0.0, 1.0, 0.0, 1.0])),
             emissive: None,
             specular: None,
             metallic: None,
@@ -242,7 +242,7 @@ impl Engine {
                 shader_manager,
                 wireframe_shader: wireframe_id,
                 frame_buffer_texture: None,
-                should_clear: true
+                should_clear: true,
             },
             event_handler,
             frame_index: 0,
@@ -343,7 +343,9 @@ impl Engine {
                 WindowEvent::FramebufferSize(width, height) => unsafe {
                     gl::Viewport(0, 0, width, height);
                     self.size = [width as usize, height as usize];
-                    self.data.camera.update_projection((width as f32) / (height as f32))
+                    self.data
+                        .camera
+                        .update_projection((width as f32) / (height as f32))
                 },
                 WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
                     self.window.set_should_close(true);

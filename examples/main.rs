@@ -33,7 +33,7 @@ fn main() {
     let grid = Renderable::new(
         grid_verts.0,
         grid_verts.1,
-        grid_verts.2,
+        Some(grid_verts.2),
         &engine.data.shader_manager.load_from_path("shaders/pos_shader").expect("Failed to load shader."),
     );
     // engine.data.add_renderable(Box::from(grid));
@@ -52,7 +52,7 @@ fn main() {
     let mut screen_pts = Renderable::new(
         screen_pts.0,
         screen_pts.1,
-        screen_pts.2,
+        Some(screen_pts.2),
         &engine.data.shader_manager.load_from_path("shaders/screen_shader").expect("Failed to load shader."),
     );
     // engine.data.shader_manager.get_mut(screen_pts.shader).unwrap().textures.insert("screen".to_string(), engine.data.frame_buffer_texture.unwrap().1);
@@ -70,7 +70,7 @@ fn main() {
     let mut debug_axes = Renderable::new(
         px_grid.0,
         px_grid.1,
-        px_grid.2,
+        Some(px_grid.2),
         &engine.data.shader_manager.load_from_path("shaders/orientation_shader").expect("Failed to load shader."),
     );
     debug_axes.shader.borrow_mut().set(vec![ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set color for debug axes.");

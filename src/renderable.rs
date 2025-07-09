@@ -1,12 +1,12 @@
+use std::any::Any;
 use crate::derive_transformable;
-use crate::glutil;
 use crate::glutil::{BufferObject, GLBuffer, GLObject, VertexArrayObject, VAA};
 use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager, ShaderPtr};
 use crate::transformation::{Transform, Transformable};
 use crate::util::find_gl_error;
-use cgmath::{Matrix4, Vector2, Vector3};
-use gl::types::{GLenum, GLfloat, GLsizei, GLuint};
-use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FALSE, FLOAT, STATIC_DRAW, TRIANGLES, UNSIGNED_INT};
+use cgmath::{Vector2, Vector3};
+use gl::types::{GLenum, GLsizei, GLuint};
+use gl::{ARRAY_BUFFER, FLOAT, STATIC_DRAW, TRIANGLES, TRIANGLE_FAN, UNSIGNED_INT};
 use itertools::Itertools;
 use obj::raw::{parse_mtl, parse_obj};
 use obj::{FromRawVertex, TexturedVertex};
@@ -22,110 +22,192 @@ pub trait Render: Transformable {
     fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>>;
     fn is(&self) -> bool;
     fn set_is(&mut self, val: bool);
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+impl Transformable for InstancedObject {
+    fn scale(&mut self, x: f32, y: f32, z: f32) {
+        self.transforms.iter_mut().for_each(|v| v.scale(x, y, z));
+    }
+
+    fn uniform_scale(&mut self, scale: f32) {
+        self.transforms
+            .iter_mut()
+            .for_each(|v| v.uniform_scale(scale));
+    }
+
+    fn rotate(&mut self, x: f32, y: f32, z: f32) {
+        self.transforms.iter_mut().for_each(|v| v.rotate(x, y, z));
+    }
+
+    fn translate(&mut self, x: f32, y: f32, z: f32) {
+        self.transforms
+            .iter_mut()
+            .for_each(|v| v.translate(x, y, z));
+    }
+
+    fn set_scale(&mut self, x: f32, y: f32, z: f32) {
+        self.transforms
+            .iter_mut()
+            .for_each(|v| v.set_scale(x, y, z));
+    }
+
+    fn set_uniform_scale(&mut self, scale: f32) {
+        self.transforms
+            .iter_mut()
+            .for_each(|v| v.set_uniform_scale(scale));
+    }
+
+    fn set_rotation(&mut self, x: f32, y: f32, z: f32) {
+        self.transforms
+            .iter_mut()
+            .for_each(|v| v.set_rotation(x, y, z));
+    }
+
+    fn set_translation(&mut self, x: f32, y: f32, z: f32) {
+        self.transforms
+            .iter_mut()
+            .for_each(|v| v.set_translation(x, y, z));
+    }
+}
+
+impl Render for InstancedObject {
+    fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>> {
+        if self.transforms.is_empty() {
+            return Ok(());
+        }
+        self.buffer_data();
+
+        let mut shader = self.shader.borrow_mut();
+        shader.use_();
+        shader.update().expect("Shader failed to update.");
+
+        unsafe {
+            self.mesh.vertex_array.bind();
+            gl::DrawElementsInstanced(
+                self.draw_type, // TODO: don't hardcode this
+                self.mesh.vertices.len() as GLsizei,
+                UNSIGNED_INT,
+                null(),
+                self.transforms.len() as GLsizei,
+            );
+            self.mesh.vertex_array.unbind();
+        }
+
+        Ok(())
+    }
+
+    fn is(&self) -> bool {
+        self.is
+    }
+
+    fn set_is(&mut self, val: bool) {
+        self.is = val;
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 pub struct InstancedObject {
-    children: MeshData,
+    mesh: MeshData,
     transforms: Vec<Transform>,
     colors: Vec<[f32; 4]>,
     shader: ShaderPtr,
+    is: bool,
+    draw_type: GLenum
 }
 impl InstancedObject {
     pub fn new(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
-        normals: Vec<Vector3<f32>>,
+        normals: Option<Vec<Vector3<f32>>>,
         shader: &ShaderPtr,
         transforms: Vec<Transform>,
         colors: Vec<[f32; 4]>,
     ) -> Self {
         let mut ret = Self {
-            children: MeshData::new(vertices, indices, Some(normals), None),
+            mesh: MeshData::new(vertices, indices, normals, None),
             shader: shader.clone(),
             transforms,
             colors,
+            is: true,
+            draw_type: TRIANGLE_FAN
         };
-        ret.children
+        ret.mesh
             .vertex_array
             .vbos
             .push(BufferObject::new(ARRAY_BUFFER));
-        ret.children
+        ret.mesh
             .vertex_array
             .vbos
             .push(BufferObject::new(ARRAY_BUFFER));
-        // ret.children.init().expect("Failed to initialize.");
+        // ret.mesh.init().expect("Failed to initialize.");
         unsafe {
-            // TODO: find a way to modify the data.
-            let vertex_data = ret.children.build_vertex_data();
+            let vertex_data = ret.mesh.build_vertex_data();
             let structure = vec![
-                VAA::new(FLOAT, 3), // Pos
-                VAA::new(FLOAT, 3), // Normal
-                VAA::new(FLOAT, 4), // Matrix row 1
-                VAA::new(FLOAT, 4), // Matrix row 2
-                VAA::new(FLOAT, 4), // Matrix row 3
-                VAA::new(FLOAT, 4), // Matrix row 4
-                VAA::new(FLOAT, 4), // Color
+                VAA::new(FLOAT, 3, 0), // Pos
+                VAA::new(FLOAT, 4, 1), // Matrix row 1
+                VAA::new(FLOAT, 4, 1), // Matrix row 2
+                VAA::new(FLOAT, 4, 1), // Matrix row 3
+                VAA::new(FLOAT, 4, 1), // Matrix row 4
+                VAA::new(FLOAT, 4, 2), // Color
             ];
-            ret.children.vertex_array.generate().expect("Failed to generate VAO");
-            ret.children.vertex_array.vbos[0]
+            ret.mesh
+                .vertex_array
+                .generate()
+                .expect("Failed to generate VAO");
+            ret.mesh.vertex_array.vbos[0]
                 .buffer_data(vertex_data.as_slice(), STATIC_DRAW)
                 .expect("Failed to buffer vertex data");
-            ret.children
+            ret.mesh
                 .vertex_array
                 .ebo
-                .buffer_data(ret.children.indices.as_slice(), STATIC_DRAW)
+                .buffer_data(ret.mesh.indices.as_slice(), STATIC_DRAW)
                 .expect("Failed to buffer index data");
-            
-            // Buffer transform matrices
-            ret.children.vertex_array.vbos[1]
-                .buffer_data(
-                    ret.transforms
-                        .iter()
-                        .map(|it| it.mat())
-                        .collect_vec()
-                        .as_slice(),
-                    STATIC_DRAW,
-                )
-                .expect("Failed to buffer transform data");
-            
-            // Buffer colors
-            ret.children.vertex_array.vbos[2]
-                .buffer_data(
-                    ret.colors.as_slice(),
-                    STATIC_DRAW,
-                )
-                .expect("Failed to buffer color data");
-            
-            ret.children.vertex_array.configure(structure).expect("couldn't configure");
-            
+
+            ret.buffer_data();
+
+            ret.mesh
+                .vertex_array
+                .configure(structure)
+                .expect("couldn't configure");
+
             // Set up instancing divisors
-            gl::VertexArrayBindingDivisor(ret.children.vertex_array.vbos[1].id, 1, 1); // Transform matrices
-            gl::VertexArrayBindingDivisor(ret.children.vertex_array.vbos[2].id, 2, 1); // Colors
+            for i in 1..8 {
+                gl::VertexArrayBindingDivisor(ret.mesh.vertex_array.id, i, 1); // Transform matrices
+            }
+            find_gl_error().expect("Failed to set up instancing divisors!");
         }
         ret
     }
-    
-    pub fn render(&mut self) -> Result<(), Box<dyn Error>> {
-        if self.transforms.is_empty() {
-            return Ok(());
-        }
-        
-        let mut shader = self.shader.borrow_mut();
-        shader.use_();
-        shader.update().expect("Shader failed to update.");
-        
-        unsafe {
-            self.children.vertex_array.bind();
-            gl::DrawElementsInstanced(
-                gl::TRIANGLES,
-                self.children.indices.len() as GLsizei,
-                gl::UNSIGNED_INT,
-                null(),
-                self.transforms.len() as GLsizei,
-            );
-            self.children.vertex_array.unbind();
-        }
-        
-        Ok(())
+
+    fn buffer_data(&mut self) {
+        // Buffer transform matrices
+        let mats =
+            self.transforms
+                .iter()
+                .map(|it| it.mat())
+                .collect_vec();
+        self.mesh.vertex_array.vbos[1]
+            .buffer_data(
+                mats.as_slice(),
+                STATIC_DRAW,
+            )
+            .expect("Failed to buffer transform data");
+
+        // Buffer colors
+        self.mesh.vertex_array.vbos[2]
+            .buffer_data(self.colors.as_slice(), STATIC_DRAW)
+            .expect("Failed to buffer color data");
+    }
+    pub fn set_data(&mut self, transforms: Vec<Transform>, colors: Vec<[f32; 4]>) {
+        self.transforms = transforms;
+        self.colors = colors;
+    }
+
+    pub fn set_draw_type(&mut self, draw_type: GLenum) {
+        self.draw_type = draw_type;
     }
 }
 pub struct MeshData {
@@ -152,12 +234,12 @@ impl MeshData {
     }
     pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
         let vertex_data = self.build_vertex_data();
-        let mut structure = vec![VAA::new(FLOAT, 3)];
+        let mut structure = vec![VAA::new(FLOAT, 3, 0)];
         if self.normals.is_some() {
-            structure.push(VAA::new(FLOAT, 3))
+            structure.push(VAA::new(FLOAT, 3, 0))
         }
         if self.tex_coords.is_some() {
-            structure.push(VAA::new(FLOAT, 3));
+            structure.push(VAA::new(FLOAT, 3, 0));
         }
         self.vertex_array.generate()?;
         self.vertex_array.vbos[0].buffer_data(vertex_data.as_slice(), STATIC_DRAW)?;
@@ -205,7 +287,7 @@ impl Renderable {
         tex_coords: Vec<Vector2<f32>>,
         shader: &ShaderPtr,
     ) -> Renderable {
-        let mut ret = Self::only_data(vertices, indices, normals, shader);
+        let mut ret = Self::only_data(vertices, indices, Some(normals), shader);
         ret.mesh_data.tex_coords = Some(tex_coords);
         ret.mesh_data.init();
         ret
@@ -214,7 +296,7 @@ impl Renderable {
     pub fn new(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
-        normals: Vec<Vector3<f32>>,
+        normals: Option<Vec<Vector3<f32>>>,
         shader: &ShaderPtr,
     ) -> Renderable {
         let mut ret = Self::only_data(vertices, indices, normals, shader);
@@ -224,11 +306,11 @@ impl Renderable {
     fn only_data(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
-        normals: Vec<Vector3<f32>>,
+        normals: Option<Vec<Vector3<f32>>>,
         shader: &ShaderPtr,
     ) -> Renderable {
         Renderable {
-            mesh_data: MeshData::new(vertices, indices, Some(normals), None),
+            mesh_data: MeshData::new(vertices, indices, normals, None),
             shader: shader.clone(),
             transform: Transform::default(),
             draw_type: TRIANGLES,
@@ -319,6 +401,10 @@ impl Render for Renderable {
 
     fn set_is(&mut self, val: bool) {
         self.is = val;
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 derive_transformable!(Renderable);
@@ -425,6 +511,10 @@ impl Render for RenderableGroup {
 
     fn set_is(&mut self, val: bool) {
         self.is = val;
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 impl Transformable for RenderableGroup {

@@ -155,22 +155,22 @@ impl Shader {
         )?);
         Ok(ret)
     }
-    pub fn load_from_path(path: &str) -> Result<Shader, GLFunctionError> {
-        let mut vert_string = path.to_owned().clone();
+    pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Shader, GLFunctionError> {
+        let mut vert_string = path.as_ref().to_str().expect("").to_owned();
         vert_string.push_str(".vert");
 
-        let mut frag_string = path.to_owned().clone();
+        let mut frag_string = path.as_ref().to_str().expect("").to_owned();
         frag_string.push_str(".frag");
         let vert_source = load_file(vert_string);
         let frag_source = load_file(frag_string);
 
-        let geo_string = format!("{}.geo", path);
+        let geo_string = format!("{}.geo", path.as_ref().to_str().expect("").to_owned());
         let mut geo_source = Default::default();
         if Path::new(&geo_string).exists() {
             geo_source = load_file(geo_string);
         }
         let mut ret = Shader {
-            path: Some(path.to_owned()),
+            path: Some(path.as_ref().to_str().expect("").to_owned()),
             geo: 0,
             optionals: 0,
             textures: HashMap::new(),

@@ -1,12 +1,15 @@
 #version 460 core
 layout (location = 0) in vec3 aPos;
+layout (location = 1) in mat4 aTransform;
+layout (location = 5) in vec4 aColor;
 
-uniform mat4 model;
 uniform float time;
 
 out VS_OUT {
     vec3 FragPos;
+    vec4 Color;
 } vs_out;
+
 layout (std140) uniform Matrices {
     vec3 cameraPos;
     mat4 view;
@@ -23,6 +26,9 @@ void main()
     0., 0., 1., 0.,
     0., 0., 0., 1.
     );
-    vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
-    gl_Position = correct_aspect * model * vec4(aPos, 1.0);
+    vs_out.FragPos = vec3(aTransform * vec4(aPos, 1.0));
+    vs_out.Color = aColor;
+
+    gl_Position = correct_aspect * aTransform  * vec4(aPos, 1.0);
+    gl_PointSize = 5.0;
 }

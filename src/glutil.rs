@@ -1,3 +1,4 @@
+use std::string::String;
 use crate::util::{find_gl_error, GLFunctionError};
 use gl::types::{GLbyte, GLdouble, GLenum, GLfloat, GLint, GLshort, GLubyte, GLuint, GLushort};
 use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER};
@@ -19,22 +20,25 @@ pub struct VAA {
     amount: u32,
     type_size: usize,
     mem_size: usize,
-    ebo_index: u32,
+    vbo_index: u32,
 }
 impl VAA {
-    pub fn new(kind: GLenum, amount: u32) -> Self {
+    pub fn new(kind: GLenum, amount: u32, vbo_index: u32) -> Self {
         let ts = VertexArrayObject::get_type_size(kind).expect("");
         VAA {
             kind,
             amount,
             type_size: ts,
             mem_size: ts * amount as usize,
-            ebo_index: 0,
+            vbo_index,
         }
+    }
+    pub fn set_vbo_index(&mut self, ebo_index: u32) {
+        self.vbo_index = ebo_index;
     }
 }
 pub struct VertexArrayObject {
-    id: u32,
+    pub(crate) id: u32,
     generated: bool,
     bound: bool,
     structure: Vec<VAA>, // Length and data type
@@ -94,11 +98,15 @@ impl VertexArrayObject {
             return Err("Some VBO has not yet been buffered!".to_owned());
         }
 
-        let mut stride: usize = self.structure.iter().map(|v| v.mem_size).sum();
+        let mut stride: HashMap<u32, u32> = HashMap::new();
+        for i in &self.structure {
+            stride.entry(i.vbo_index).or_insert(0);
+            stride.get_mut(&i.vbo_index).unwrap().add_assign(i.mem_size as u32);
+        }
         let mut pointer_offset: HashMap<u32, u32> = HashMap::new();
         unsafe {
             for i in 0..self.vbos.len() {
-                gl::VertexArrayVertexBuffer(self.id, i as u32, self.vbos[i].id, 0, stride as i32);
+                gl::VertexArrayVertexBuffer(self.id, i as u32, self.vbos[i].id, 0, stride[&(i as u32)] as i32);
                 pointer_offset.insert(i as u32, 0);
             }
         }
@@ -111,16 +119,16 @@ impl VertexArrayObject {
                     self.structure[i].amount as i32,
                     self.structure[i].kind,
                     false as u8,
-                    pointer_offset[&self.structure[i].ebo_index],
+                    pointer_offset[&self.structure[i].vbo_index],
                 );
-                gl::VertexArrayAttribBinding(self.id, i as GLuint, self.structure[i].ebo_index);
+                gl::VertexArrayAttribBinding(self.id, i as GLuint, self.structure[i].vbo_index);
             }
             pointer_offset
-                .get_mut(&self.structure[i].ebo_index)
+                .get_mut(&self.structure[i].vbo_index)
                 .unwrap()
                 .add_assign(self.structure[i].mem_size as u32);
         }
-        Ok(())
+        find_gl_error().map_err(|x| x.message)
     }
 
     fn get_type_size(type_enum: GLenum) -> Result<usize, String> {
