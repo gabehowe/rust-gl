@@ -22,6 +22,7 @@ use std::cell::{RefCell, RefMut};
 use std::cmp::min_by;
 use std::error::Error;
 use std::f32;
+use std::f32::consts::PI;
 use std::ffi::c_float;
 use std::ptr::null;
 use std::sync::Arc;
@@ -68,7 +69,7 @@ impl Draw {
         );
         let mut rectangle = MeshData::new(
             verts.to_vec(),
-            vec![0, 1, 3,2],
+            vec![0, 1, 3, 2],
             None,
             None,
         );
@@ -101,7 +102,7 @@ impl Draw {
             &shader,
             vec![],
             vec![]);
-        let refr = Arc::from(RefCell::from(Box::from(rectangle_instanced) as Box<dyn Render>) );
+        let refr = Arc::from(RefCell::from(Box::from(rectangle_instanced) as Box<dyn Render>));
         engine.data.add_renderable_rc(&refr);
         Draw {
             rectangles: vec![],
@@ -138,12 +139,14 @@ impl Draw {
         let slope = (rpoint.y - lpoint.y) / (rpoint.x - lpoint.x);
         let length = (p2 - p1).magnitude();
         let angle = (lpoint.y - rpoint.y).atan2(lpoint.x - rpoint.x);
-
+        let perp_angle = (angle + PI / 2.0);
+        let scaled_width = width * 0.01;
 
         let mut line = Object2d::new(color, Transform::with_position(lpoint.extend(0.0)));
-        line.scale(length, width * 0.01, 1.0);
+        line.scale(length, scaled_width, 1.0);
         line.rotate(0.0, angle, 0.0);
         line.translate(rpoint.x - lpoint.x, rpoint.y - lpoint.y, 0.0);
+        line.translate(perp_angle.cos() * -scaled_width/2.0, perp_angle.sin() * -scaled_width/2.0, 0.0);
         self.add_object(line, "rectangle")
     }
     pub fn circle(&mut self, center: Vector2<f32>, radius: f32, color: [f32; 4]) {
