@@ -132,8 +132,6 @@ impl Draw {
         );
     }
     pub fn line(&mut self, p1: Vector2<f32>, p2: Vector2<f32>, width: f32, color: [f32; 4]) {
-        // let lpoint = if p1.x <= p2.x { p1 } else { p2 };
-        // let rpoint = if lpoint == p1 { p2 } else { p1 };
         let lpoint = p2;
         let rpoint = p1;
         let slope = (rpoint.y - lpoint.y) / (rpoint.x - lpoint.x);
@@ -170,7 +168,6 @@ impl Draw {
                 .downcast_mut::<InstancedObject>()
                 .expect("couldn't downcast!");
             vb.set_data(transforms, colors);
-            // vb.render(None)?;
         }
 
         // Render circles using instanced rendering
@@ -184,7 +181,6 @@ impl Draw {
                 .downcast_mut::<InstancedObject>()
                 .expect("couldn't downcast!");
             vb.set_data(transforms, colors);
-            // vb.render(None)?; // TODO: remove this because it's immediately overwritten by the engine render function.
         }
 
         Ok(())

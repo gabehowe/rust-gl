@@ -297,6 +297,7 @@ impl Engine {
         F: FnMut(&mut Ui, f64, &mut Data),
     {
         self.frame_index += 1;
+        self.event_handler.current_frame_time = self.get_time();
 
         self.data.handle_input(&self.window, self.frametime);
         self.data
@@ -312,15 +313,14 @@ impl Engine {
             imgui_glfw_ref.get_renderer().render(imgui_ref);
         }
 
+        self.event_handler.events.clear();
+        self.process_glfw_events();
         self.window.swap_buffers();
         unsafe {
             gl::Flush();
         }
-        self.event_handler.events.clear();
-        self.process_glfw_events();
 
-        self.event_handler.current_frame_time = unsafe { glfwGetTime() };
-        self.frametime = self.event_handler.current_frame_time - self.event_handler.last_frame_time;
+        self.frametime = self.get_time() - self.event_handler.current_frame_time ;
         self.event_handler.last_frame_time = self.event_handler.current_frame_time;
         if self.event_handler.current_frame_time - self.event_handler.last_tick > 1.0 {
             self.event_handler.last_tick = self.event_handler.current_frame_time;
@@ -427,6 +427,9 @@ impl Engine {
     }
     pub fn get_time(&mut self) -> f64 {
         self.glfw.get_time()
+    }
+    pub fn get_cursor_pos(&self) -> (f64, f64) {
+        self.window.get_cursor_pos()
     }
 }
 

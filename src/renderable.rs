@@ -85,7 +85,7 @@ impl Render for InstancedObject {
         unsafe {
             self.mesh.vertex_array.bind();
             gl::DrawElementsInstanced(
-                self.draw_type, // TODO: don't hardcode this
+                self.draw_type,
                 self.mesh.vertices.len() as GLsizei,
                 UNSIGNED_INT,
                 null(),
