@@ -10,6 +10,7 @@
     clippy::cargo,
 )]
 #![allow(clippy::missing_errors_doc, clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+#![feature(const_vec_string_slice)]
 extern crate alloc;
 extern crate gl;
 
