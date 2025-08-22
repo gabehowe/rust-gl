@@ -1,0 +1,6 @@
+[submodule "lib/imgui-glfw-rs"]
+	path = lib/imgui-glfw-rs
+	url = git@github.com:gabehowe/imgui-glfw-rs.git
+[submodule "lib/rust-imgui-opengl-renderer"]
+	path = lib/rust-imgui-opengl-renderer
+	url = git@github.com:gabehowe/rust-imgui-opengl-renderer.git
