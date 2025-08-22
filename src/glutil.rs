@@ -7,25 +7,31 @@ use std::error::Error;
 use std::ops::AddAssign;
 
 pub trait GLObject {
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `GLFunctionError`.
     fn generate(&mut self) -> Result<(), Box<dyn Error>>;
     fn bind(&mut self);
     fn unbind(&mut self);
 }
 pub trait GLBuffer: GLObject {
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `GLFunctionError`.
     fn buffer_data<T: Sized>(&mut self, data: &[T], usage: GLenum) -> Result<(), GLFunctionError>;
 }
 /// Vertex Array Attribute
-pub struct VAA {
+pub struct Vaa {
     kind: GLenum,
     amount: u32,
     type_size: usize,
     mem_size: usize,
     vbo_index: u32,
 }
-impl VAA {
+impl Vaa {
+    /// # Panics
+    /// If the type size cannot be determined for the given `kind`.
     pub fn new(kind: GLenum, amount: u32, vbo_index: u32) -> Self {
-        let ts = VertexArrayObject::get_type_size(kind).expect("");
-        VAA {
+        let ts = VertexArrayObject::get_type_size(kind).expect("Couldn't get type size!");
+        Self {
             kind,
             amount,
             type_size: ts,
@@ -33,15 +39,13 @@ impl VAA {
             vbo_index,
         }
     }
-    pub fn set_vbo_index(&mut self, ebo_index: u32) {
-        self.vbo_index = ebo_index;
-    }
+
 }
 pub struct VertexArrayObject {
     pub(crate) id: u32,
     generated: bool,
     bound: bool,
-    structure: Vec<VAA>, // Length and data type
+    structure: Vec<Vaa>, // Length and data type
     pub ebo: BufferObject,
     pub vbos: Vec<BufferObject>,
 }
@@ -54,7 +58,7 @@ impl GLObject for VertexArrayObject {
         find_gl_error()?;
         self.generated = true;
         self.ebo.generate()?;
-        self.vbos.iter_mut().try_for_each(|arg0| arg0.generate())?;
+        self.vbos.iter_mut().try_for_each(GLObject::generate)?;
         unsafe {
             gl::VertexArrayElementBuffer(self.id, self.ebo.id);
         }
@@ -81,8 +85,8 @@ impl Default for VertexArrayObject {
 }
 
 impl VertexArrayObject {
-    pub fn new() -> VertexArrayObject {
-        VertexArrayObject {
+    pub fn new() -> Self {
+        Self {
             id: 0,
             generated: false,
             bound: false,
@@ -91,7 +95,10 @@ impl VertexArrayObject {
             vbos: vec![BufferObject::new(ARRAY_BUFFER)],
         }
     }
-    pub(crate) fn configure(&mut self, structure: Vec<VAA>) -> Result<(), String> {
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `GLFunctionError`.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+    pub(crate) fn configure(&mut self, structure: Vec<Vaa>) -> Result<(), String> {
         self.structure = structure;
         // Enforce state
         if self.vbos.iter().any(|x| !x.buffered) {
@@ -101,7 +108,7 @@ impl VertexArrayObject {
         let mut stride: HashMap<u32, u32> = HashMap::new();
         for i in &self.structure {
             stride.entry(i.vbo_index).or_insert(0);
-            stride.get_mut(&i.vbo_index).unwrap().add_assign(i.mem_size as u32);
+            stride.get_mut(&i.vbo_index).ok_or("Couldn't get vbo")?.add_assign(i.mem_size as u32);
         }
         let mut pointer_offset: HashMap<u32, u32> = HashMap::new();
         unsafe {
@@ -118,19 +125,21 @@ impl VertexArrayObject {
                     i as u32,
                     self.structure[i].amount as i32,
                     self.structure[i].kind,
-                    false as u8,
+                    u8::from(false),
                     pointer_offset[&self.structure[i].vbo_index],
                 );
                 gl::VertexArrayAttribBinding(self.id, i as GLuint, self.structure[i].vbo_index);
             }
             pointer_offset
                 .get_mut(&self.structure[i].vbo_index)
-                .unwrap()
+                .ok_or("Couldn't get vbo")?
                 .add_assign(self.structure[i].mem_size as u32);
         }
         find_gl_error().map_err(|x| x.message)
     }
-
+    
+    /// # Errors
+    /// If the type is not supported, it will return an error.
     fn get_type_size(type_enum: GLenum) -> Result<usize, String> {
         match type_enum {
             gl::FLOAT => Ok(size_of::<GLfloat>()),
@@ -157,8 +166,8 @@ pub struct BufferObject {
     kind: GLenum,
 }
 impl BufferObject {
-    pub(crate) fn new(kind: GLenum) -> BufferObject {
-        BufferObject {
+    pub(crate) const fn new(kind: GLenum) -> Self {
+        Self {
             id: 0,
             generated: false,
             bound: false,
@@ -190,6 +199,8 @@ impl GLObject for BufferObject {
     }
 }
 impl GLBuffer for BufferObject {
+
+    #[allow(clippy::cast_possible_wrap)]
     fn buffer_data<T: Sized>(&mut self, data: &[T], usage: GLenum) -> Result<(), GLFunctionError> {
         self.buffered = true;
         unsafe {
@@ -198,7 +209,7 @@ impl GLBuffer for BufferObject {
                 size_of_val(data) as isize,
                 data.as_ptr().cast(),
                 usage,
-            )
+            );
         }
         find_gl_error()
     }

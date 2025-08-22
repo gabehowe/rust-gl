@@ -10,7 +10,7 @@ const fn display_size_adjustment(inp: Vector2<f32>, size: [usize; 2]) -> Vector2
     )
 }
 
-fn do_circles(mut draw_func: impl FnMut(Vector2<f32>, [f32; 4]) -> ()) {
+fn do_circles(mut draw_func: impl FnMut(Vector2<f32>, [f32; 4])) {
     for _ in 0..200000 {
         let x: f32 = random();
         let y: f32 = random();

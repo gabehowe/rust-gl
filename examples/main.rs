@@ -49,7 +49,7 @@ fn main() {
         vec![Vector3::zero(), Vector3::zero(), Vector3::zero(), Vector3::zero()],
     );
     engine.data.create_framebuffer_texture();
-    let mut screen_pts = Renderable::new(
+    let screen_pts = Renderable::new(
         screen_pts.0,
         screen_pts.1,
         Some(screen_pts.2),

@@ -1,7 +1,8 @@
 use crate::util::{find_gl_error, load_file, GLFunctionError};
+use alloc::rc::Rc;
 use cgmath::{Array, Matrix, Matrix2, Matrix3, Matrix4, Vector3, Vector4};
 use core::slice::Iter;
-use gl::types::{GLenum, GLint, GLsizei, GLsizeiptr, GLuint};
+use gl::types::{GLenum, GLint, GLsizei, GLuint};
 use gl::{
     FALSE, FRAGMENT_SHADER, STATIC_DRAW, TEXTURE_2D, TEXTURE_WRAP_S, TEXTURE_WRAP_T,
     UNIFORM_BUFFER, VERTEX_SHADER,
@@ -11,33 +12,32 @@ use image::{load_from_memory, open, DynamicImage};
 use log::{debug, trace};
 use obj::raw::material::{Material, MtlColor};
 use obj::{TexturedVertex, Vertex};
-use std::cell::{RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char};
+use std::os::raw::c_char;
 use std::path::Path;
 use std::ptr;
 use std::ptr::null;
-use std::sync::{Arc};
 
 pub trait FromVertex<T> {
     fn from_vertex(vertex: &T) -> Self;
 }
 impl FromVertex<Vertex> for Vector3<f32> {
     fn from_vertex(vertex: &Vertex) -> Self {
-        Vector3::new(vertex.position[0], vertex.position[1], vertex.position[2])
+        Self::new(vertex.position[0], vertex.position[1], vertex.position[2])
     }
 }
 impl FromVertex<TexturedVertex> for Vector3<f32> {
     fn from_vertex(vertex: &TexturedVertex) -> Self {
-        Vector3::new(vertex.position[0], vertex.position[1], vertex.position[2])
+        Self::new(vertex.position[0], vertex.position[1], vertex.position[2])
     }
 }
 
-pub type ShaderPtr = Arc<RefCell<Shader>>;
+pub type ShaderPtr = Rc<RefCell<Shader>>;
 fn new_shader_ptr(shader: Shader) -> ShaderPtr {
-    Arc::new(RefCell::new(shader))
+    Rc::new(RefCell::new(shader))
 }
 
 #[derive(Debug)]
@@ -52,9 +52,9 @@ enum CacheType {
     VecUInt(Vec<u32>),
     VecFloat(Vec<f32>),
 }
-
-fn from_color(color: Option<MtlColor>) -> Vec<f32> {
-    if let Some(MtlColor::Rgb(r, g, b)) = color {
+#[allow(clippy::ref_option)]
+fn from_color(color: &Option<MtlColor>) -> Vec<f32> {
+    if let &Some(MtlColor::Rgb(r, g, b)) = color {
         return vec![r, g, b];
     }
     Vec::new()
@@ -71,9 +71,12 @@ impl Default for ShaderManager {
 }
 
 impl ShaderManager {
-    pub fn new() -> ShaderManager {
-        let mut ret = ShaderManager {
-            shaders: Default::default(),
+    /// # Panics
+    /// If a usize cannot be converted to an isize.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut ret = Self {
+            shaders: Vec::default(),
             world_buffer: 0,
         };
         unsafe {
@@ -87,11 +90,15 @@ impl ShaderManager {
                 1,
                 ret.world_buffer,
                 0,
-                size_of::<Vector4<f32>>() as GLsizeiptr,
+                isize::try_from(size_of::<Vector4<f32>>()).unwrap(),
             );
         }
         ret
     }
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `GLFunctionError`.
+    /// If the shader cannot be borrowed mutably, it will return a `Box<dyn Error>`.
+    #[allow(clippy::cast_possible_wrap)]
     pub fn update(&mut self) -> Result<(), Box<dyn Error>> {
         let ambient: Vector4<f32> = Vector4::new(0.0, 0.0, 0.0, 1.0);
         unsafe {
@@ -99,7 +106,7 @@ impl ShaderManager {
             gl::BufferSubData(
                 UNIFORM_BUFFER,
                 0,
-                size_of::<Vector4<f32>>() as GLsizeiptr,
+                size_of::<Vector4<f32>>() as isize,
                 ambient.as_ptr().cast(),
             );
             gl::BindBuffer(UNIFORM_BUFFER, 0);
@@ -114,13 +121,17 @@ impl ShaderManager {
         self.shaders.push(arc.clone());
         arc
     }
+    #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<ShaderPtr> {
         self.shaders.iter()
     }
-    pub fn load_from_path(&mut self, path: &str) -> Result<ShaderPtr, GLFunctionError> {
+    /// # Errors
+    /// If the shader cannot be loaded from the path, it will return a `GLFunctionError`.
+    pub fn load_from_path(&mut self, path: &str) -> Result<ShaderPtr, Box<dyn Error>> {
         Ok(self.register(Shader::load_from_path(path)?))
     }
-    pub fn count(&self) -> usize {
+    #[must_use]
+    pub const fn count(&self) -> usize {
         self.shaders.len()
     }
 }
@@ -139,38 +150,44 @@ pub struct Shader {
 }
 
 impl Shader {
-    fn new() -> Shader {
+    fn new() -> Self {
         Self::default()
     }
+    /// # Errors
+    /// If the shader does not be compiled, it will return a `GLFunctionError`.
     pub fn from_source(
         vert_source: &str,
         frag_source: &str,
         geo_source: &str,
-    ) -> Result<Shader, GLFunctionError> {
+    ) -> Result<Self, Box<dyn Error>> {
         let mut ret = Self::new();
         ret.program = Some(ret.compile(
-            CString::new(vert_source).unwrap(),
-            CString::new(frag_source).unwrap(),
-            CString::new(geo_source).unwrap(),
+            CString::new(vert_source)?,
+            CString::new(frag_source)?,
+            CString::new(geo_source)?,
         )?);
         Ok(ret)
     }
-    pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Shader, GLFunctionError> {
-        let mut vert_string = path.as_ref().to_str().expect("").to_owned();
+    /// # Errors
+    /// If the shader cannot be loaded from the path, it will return a `GLFunctionError`.
+    pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error>> {
+        let path = path.as_ref().to_str().ok_or("Invalid path!")?;
+        let mut vert_string = path.to_owned();
         vert_string.push_str(".vert");
 
-        let mut frag_string = path.as_ref().to_str().expect("").to_owned();
+        let mut frag_string = path.to_owned();
         frag_string.push_str(".frag");
         let vert_source = load_file(vert_string);
         let frag_source = load_file(frag_string);
 
-        let geo_string = format!("{}.geo", path.as_ref().to_str().expect("").to_owned());
-        let mut geo_source = Default::default();
-        if Path::new(&geo_string).exists() {
-            geo_source = load_file(geo_string);
-        }
-        let mut ret = Shader {
-            path: Some(path.as_ref().to_str().expect("").to_owned()),
+        let geo_string = format!("{}.geo", path.to_owned());
+        let geo_source = if Path::new(&geo_string).exists() {
+            load_file(geo_string)
+        } else {
+            CString::default()
+        };
+        let mut ret = Self {
+            path: Some(path.to_owned()),
             geo: 0,
             optionals: 0,
             textures: HashMap::new(),
@@ -183,202 +200,28 @@ impl Shader {
             values: HashMap::new(),
             debug_sources: vec![vert_source.clone(), frag_source.clone(), geo_source.clone()],
             program: None,
-            cache: Default::default(),
+            cache: HashMap::default(),
         };
         ret.program = Some(ret.compile(vert_source, frag_source, geo_source)?);
         ret.check_optionals();
         Ok(ret)
     }
-    #[deprecated = "Use NarrowingMaterial instead."]
-    pub fn load_from_mtl(
-        mtl: Material,
-        mtl_dir: &str,
-        base_path: &str,
-    ) -> Result<Shader, Box<dyn Error>> {
-        let mut ret = Shader {
-            path: Some(base_path.to_owned()),
-            geo: 0,
-            optionals: 0,
-            textures: HashMap::new(),
-            vector_values: HashMap::new(),
-            values: Default::default(),
-            debug_sources: vec![],
-            program: None,
-            cache: Default::default(),
-        };
-        if mtl.ambient.is_some() {
-            ret.vector_values
-                .insert("ambient".to_owned(), from_color(mtl.ambient));
-        }
-        if mtl.diffuse.is_some() {
-            ret.vector_values
-                .insert("diffuse".to_owned(), from_color(mtl.diffuse));
-        }
-        if mtl.specular.is_some() {
-            ret.vector_values
-                .insert("specular".to_owned(), from_color(mtl.specular));
-        }
-        if mtl.emissive.is_some() {
-            ret.vector_values
-                .insert("emissive".to_owned(), from_color(mtl.emissive));
-        }
-        if mtl.optical_density.is_some() {
-            //let ior = mtl.optical_density.unwrap();
-            // let specular = ((ior-1.0)/(ior+1.0)).powf(2.0)/0.08;
-            let specular = 256.0;
-            ret.values.insert("specular_exponent".to_owned(), specular);
-        }
-
-        if mtl.diffuse_map.is_some() {
-            let path = mtl.diffuse_map.clone().unwrap().file.clone().to_owned();
-            ret.textures.insert(
-                "diffuse".to_owned(),
-                Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()),
-            );
-        }
-
-        if mtl.ambient_map.is_some() {
-            let path = mtl.ambient_map.clone().unwrap().file.clone().to_owned();
-            ret.textures.insert(
-                "ambient".to_owned(),
-                Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()),
-            );
-        }
-
-        if mtl.specular_map.is_some() {
-            let path = mtl.specular_map.clone().unwrap().file.clone().to_owned();
-            ret.textures.insert(
-                "specular".to_owned(),
-                Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()),
-            );
-        }
-
-        if mtl.emissive_map.is_some() {
-            let path = mtl.emissive_map.clone().unwrap().file.clone().to_owned();
-            ret.textures.insert(
-                "emissive".to_owned(),
-                Self::load_texture((mtl_dir.to_owned() + "/" + &path).as_str()),
-            );
-        }
-        let mut vert_string = base_path.to_owned().clone();
-        vert_string.push_str(".vert");
-        let mut vert_source = load_file(vert_string).to_str().unwrap().to_owned();
-        ret.debug_sources
-            .push(CString::new(vert_source.clone()).unwrap());
-        let mut frag_string = base_path.to_owned().clone();
-        frag_string.push_str(".frag");
-        let mut frag_source = load_file(frag_string).to_str().unwrap().to_owned();
-        ret.debug_sources
-            .push(CString::new(frag_source.clone()).unwrap());
-        ret.debug_sources.push(CString::new("").unwrap());
-        let mut locations =
-            "layout (location = 0) in vec3 aPos;\nlayout (location = 1) in vec3 aNormal;\n"
-                .to_owned();
-        let mut passthroughs = "";
-        let mut outs = "vec3 Normal;\nvec3 FragPos;\n".to_owned();
-        let uniforms = "uniform mat4 model;";
-        let std140s =
-            "layout (std140) uniform Matrices {vec3 cameraPos;\nmat4 view;\nmat4 projection;\n};\nlayout (std140, binding=1) uniform World {vec4 ambient;};";
-        if mtl.ambient_map.clone().is_some()
-            || mtl.diffuse_map.clone().is_some()
-            || mtl.specular_map.clone().is_some()
-            || mtl.emissive_map.is_some()
-        {
-            locations += "layout (location = 2) in vec2 aTexCoord;";
-            passthroughs = "vs_out.TexCoord = aTexCoord;";
-            outs += "vec2 TexCoord;";
-        }
-        vert_source = vert_source.replace("//processed", "");
-        vert_source = vert_source.replace("//T: LOCATIONS", locations.as_str());
-        vert_source = vert_source.replace("//T: PASSTHROUGHS", passthroughs);
-        vert_source = vert_source.replace(
-            "//T: OUT",
-            format!("out VS_OUT {{\n{}}} vs_out;", outs).as_str(),
-        );
-        vert_source = vert_source.replace("//T: UNIFORMS", uniforms);
-        vert_source = vert_source.replace("//T: STD140", std140s);
-
-        frag_source = frag_source.replace("//processed", "");
-        frag_source = frag_source.replace(
-            "//T: IN",
-            format!("in VS_OUT {{\n{}}} fs_in;", outs).as_str(),
-        );
-        frag_source = frag_source.replace("//T: OUT", "out vec4 FragColor;");
-        frag_source = frag_source.replace("//T: STD140", std140s);
-        let mut textures = "".to_owned();
-        let mut uniforms = "".to_owned();
-        let mut logic = "".to_owned();
-        for i in ["diffuse", "emissive"] {
-            if ret.textures.contains_key(i) {
-                logic.push_str("vec4 ");
-                logic.push_str(i);
-                logic.push_str(" = texture(");
-                logic.push_str(i);
-                logic.push_str(", fs_in.TexCoord);\n");
-            } else {
-                uniforms.push_str("uniform vec4 ");
-                uniforms.push_str(i);
-                uniforms.push_str(";\n");
-            }
-        }
-        ret.values.insert("specular".to_string(), 1.0);
-        if ret.values.contains_key("specular_exponent") {
-            uniforms.push_str("uniform float specular_exponent;\n");
-        }
-        for i in 0..ret.textures.len() {
-            let texture_name = ret.textures.keys().nth(i).unwrap();
-            let mut texture = format!("layout (binding={i}) uniform sampler2D ").to_owned();
-            texture.push_str(&texture_name.clone());
-            texture.push_str(";\n");
-            textures.push_str(&texture);
-        }
-        frag_source = frag_source.replace("//T: TEXTURES", textures.as_str());
-        frag_source = frag_source.replace("//T: LOGIC", logic.as_str());
-        frag_source = frag_source.replace("//T: UNIFORMS", uniforms.as_str());
-        ret.program = Some(ret.compile(
-            CString::new(vert_source).expect("Failed to create CString"),
-            CString::new(frag_source).expect("Failed to create CString"),
-            CString::new("").expect("Failed to create CString"),
-        )?);
-        ret.use_();
-        for (i, v) in ret.vector_values.clone() {
-            let ov = v.clone();
-            let vector = vec![ov[0], ov[1], ov[2], 1.0];
-            let os = i.clone();
-            // println!("{}", i);
-            ret.set(vector, os.as_str())?;
-        }
-        for (i, v) in ret.values.clone() {
-            let os = i.clone();
-            ret.set(v, os.as_str())?;
-        }
-        Self::clear_shader();
-
-        ret.check_optionals();
-        Ok(ret)
-    }
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `GLFunctionError`.
     fn create_shader(shader_type: GLenum) -> Result<u32, GLFunctionError> {
         let shader = unsafe { gl::CreateShader(shader_type) };
-        if shader == 0 {
-            Err(find_gl_error().err().unwrap())
-        } else {
-            Ok(shader)
-        }
+        find_gl_error().and(Ok(shader))
     }
-    fn create_program() -> Result<GLuint, GLFunctionError> {
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `GLFunctionError`.
+    fn create_program() -> Result<u32, GLFunctionError> {
         let program = unsafe { gl::CreateProgram() };
-        if program == 0 {
-            Err(find_gl_error().unwrap_err())
-        } else {
-            Ok(program)
-        }
+        find_gl_error().and(Ok(program))
     }
-    fn compile_subshader(
-        &mut self,
-        program: u32,
-        source: CString,
-        id: u32,
-    ) -> Result<(), GLFunctionError> {
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `GLFunctionError`.
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    fn compile_subshader(program: u32, source: CString, id: u32) -> Result<(), Box<dyn Error>> {
         unsafe {
             gl::ShaderSource(id, 1, &source.as_ptr(), null());
             gl::CompileShader(id);
@@ -388,7 +231,7 @@ impl Shader {
             gl::GetShaderiv(id, gl::COMPILE_STATUS, &mut success);
         }
         if success == 0 {
-            find_gl_error().expect("booyah");
+            find_gl_error()?;
             let mut buf_size = 0;
             unsafe {
                 gl::GetShaderiv(id, gl::INFO_LOG_LENGTH, &mut buf_size);
@@ -398,46 +241,51 @@ impl Shader {
             unsafe {
                 gl::GetShaderInfoLog(id, buf_size, ptr::null_mut(), buf.as_mut_ptr().cast());
             }
-            trace!("{}", source.into_string().unwrap());
-            let mut r = "".to_string();
+            trace!("{}", source.into_string()?);
+            let mut r = String::new();
             unsafe {
                 buf.set_len(buf_size as usize);
-                r.push_str(CStr::from_ptr(buf.as_ptr()).to_str().unwrap());
+                r.push_str(CStr::from_ptr(buf.as_ptr()).to_str()?);
             }
             r.push('\n');
-            return Err(GLFunctionError::new(format!("Shader Compile Error: {}", r)));
+            return Err(GLFunctionError::new(format!("Shader Compile Error: {r}")).into());
         }
         unsafe {
             gl::AttachShader(program, id);
         }
         Ok(())
     }
+    /// # Errors
+    /// If the program fails to compile.
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
     pub fn compile(
         &mut self,
         vert_source: CString,
         frag_source: CString,
         geo_source: CString,
-    ) -> Result<u32, GLFunctionError> {
+    ) -> Result<u32, Box<dyn Error>> {
         let vert_program = Self::create_shader(VERTEX_SHADER)?;
         let frag_program = Self::create_shader(FRAGMENT_SHADER)?;
         let program = Self::create_program()?;
-        if geo_source.to_str().unwrap() != "" {
+        if !geo_source.to_str()?.is_empty() {
             self.geo = unsafe { gl::CreateShader(gl::GEOMETRY_SHADER) };
-            self.compile_subshader(program, geo_source, self.geo)?;
+            Self::compile_subshader(program, geo_source, self.geo)?;
         }
         // println!("{:?}", self.geo);
         // println!("{:?}", vert_source.to_str().unwrap().replace("\\n", "\r\n"));
         // println!("{:?}", frag_source.to_str().unwrap().replace("\\n", "\r\n"));
 
-        self.compile_subshader(program, vert_source, vert_program)?;
-        self.compile_subshader(program, frag_source, frag_program)?;
+        Self::compile_subshader(program, vert_source, vert_program)?;
+        Self::compile_subshader(program, frag_source, frag_program)?;
 
         unsafe {
             gl::LinkProgram(program);
         }
 
         let mut success = 0;
-        unsafe { gl::GetProgramiv(program, gl::LINK_STATUS, &mut success); }
+        unsafe {
+            gl::GetProgramiv(program, gl::LINK_STATUS, &mut success);
+        }
         if success == 0 {
             let mut log_len = 0_i32;
             let mut v: Vec<u8> = Vec::with_capacity(1024);
@@ -446,9 +294,10 @@ impl Shader {
             return Err(GLFunctionError::new(format!(
                 "Shader Compile Error: {}",
                 String::from_utf8_lossy(&v)
-            )));
+            ))
+            .into());
         }
-        Self::bind_matrices(program).expect("Failed to bind matrices");
+        Self::bind_matrices(program)?;
         Ok(program)
     }
 
@@ -464,32 +313,37 @@ impl Shader {
         self.update_optionals()?;
         Ok(())
     }
+    #[allow(clippy::unused_result_ok, reason = "Should fail silently")]
     pub fn try_runtime_recompile(&mut self) {
         if let Some(path) = self.path.clone() {
             let mut vert_string: String = path.clone();
             vert_string.push_str(".vert");
 
-            let mut frag_string: String = path.to_owned().clone();
+            let mut frag_string: String = path.clone();
             frag_string.push_str(".frag");
             let vert_source = load_file(vert_string);
             let frag_source = load_file(frag_string);
 
-            let geo_string = format!("{}.geo", path);
-            let mut geo_source = Default::default();
-            if Path::new(&geo_string).exists() {
-                geo_source = load_file(geo_string);
-            }
+            let geo_string = format!("{path}.geo");
+            let geo_source = if Path::new(&geo_string).exists() {
+                load_file(geo_string)
+            } else {
+                CString::default()
+            };
 
             if (vert_source != self.debug_sources[0]
                 || frag_source != self.debug_sources[1]
                 || geo_source != self.debug_sources[2])
-                && !vert_source.to_str().unwrap().contains("//proccessed")
+                && !vert_source
+                    .to_str()
+                    .unwrap_or_default()
+                    .contains("//proccessed")
             {
                 let new_progid =
                     self.compile(vert_source.clone(), frag_source.clone(), geo_source.clone());
-                if new_progid.is_ok() {
-                    self.program = Some(new_progid.unwrap());
-                    self.load_cached_uniforms();
+                if let Ok(new_progid) = new_progid {
+                    self.program = Some(new_progid);
+                    let _ = self.load_cached_uniforms();
                 }
                 self.debug_sources = vec![vert_source, frag_source, geo_source];
             }
@@ -498,6 +352,8 @@ impl Shader {
 
     /**
     Must be called use_ because use is a reserved keyword.
+    # Panics
+    If the program cannot be used.
      */
     pub fn use_(&self) {
         if self.program.is_none() {
@@ -515,6 +371,7 @@ impl Shader {
             self.optionals |= 1;
         }
     }
+    #[allow(clippy::cast_possible_truncation)]
     fn update_optionals(&mut self) -> Result<(), String> {
         if self.optionals & 1 == 1 {
             self.set(unsafe { glfwGetTime() } as f32, "time")?;
@@ -531,13 +388,13 @@ impl Shader {
         // gl::GenTextures(1, &mut self.texture);
         // gl::BindTexture(TEXTURE_2D, self.texture);
     }
-    fn load_texture(path: &str) -> u32 {
-        let img = open(path).expect("Jimbo jones");
-        Self::create_image_texture(img)
+    fn load_texture(path: &str) -> Result<u32, Box<dyn Error>> {
+        let img = open(path)?;
+        Ok(Self::create_image_texture(img))
     }
     fn create_image_texture(data: DynamicImage) -> u32 {
         let mut texture = 0;
-        let img = data.clone();
+        let img = data;
         let rgba = img.to_rgba8();
         let raw = rgba;
         unsafe {
@@ -549,7 +406,7 @@ impl Shader {
                 &raw,
                 img.width() as usize,
                 img.height() as usize,
-            )
+            );
             // gl::GenerateMipmap(TEXTURE_2D);
         }
 
@@ -586,7 +443,7 @@ impl Shader {
         texture as usize
     }
     fn use_textures(&self) {
-        let vals = self.textures.values().cloned().collect::<Vec<u32>>();
+        let vals = self.textures.values().copied().collect::<Vec<u32>>();
         if vals.is_empty() {
             return;
         }
@@ -594,7 +451,7 @@ impl Shader {
     }
 
     pub fn bind_matrices(program: u32) -> Result<(), Box<dyn Error>> {
-        let block_name = CString::new("Matrices").unwrap();
+        let block_name = CString::new("Matrices")?;
         let cast = block_name.into_raw();
         unsafe {
             let index = gl::GetUniformBlockIndex(program, cast.cast());
@@ -605,67 +462,63 @@ impl Shader {
     }
 
     fn is_used(&self) -> Result<bool, ()> {
-        if self.program.is_none() {
+        let Some(prog) = self.program else {
             return Err(());
-        }
+        };
         let mut value = 0;
         unsafe { gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut value) };
-        Ok(value == self.program.unwrap() as i32)
+        Ok(value == prog as i32)
     }
 
     fn get_uniform_location(&self, name: &str) -> Result<GLint, String> {
-        if self.program.is_none() {
+        let Some(prog) = self.program else {
             return Err("No program".to_owned());
-        }
-        let block_name = CString::new(name).unwrap();
+        };
+        let block_name = CString::new(name).map_err(|_| "Couldn't unwrap CString")?;
         let casted = block_name.into_raw();
-        let location = unsafe { gl::GetUniformLocation(self.program.unwrap(), casted) };
+        let location = unsafe { gl::GetUniformLocation(prog, casted) };
         if location == -1 {
-            Err(format!("Uniform {} not found", name))
+            Err(format!("Uniform {name} not found"))
         } else {
             Ok(location)
         }
     }
 
-    fn load_cached_uniforms(&mut self) {
+    fn load_cached_uniforms(&self) -> Result<(), String> {
         println!("{:?}", self.cache);
-        for (k, v) in self.cache.iter() {
+        for (k, v) in &self.cache {
+            // TODO: Figure out this mess
             match v {
                 CacheType::Matrix4(m) => {
-                    self.direct_set(*m, k)
-                        .expect("Couldn't direct_set matrix");
+                    self.direct_set(*m, k)?;
                 }
                 CacheType::Matrix3(m) => {
-                    self.direct_set(*m, k)
-                        .expect("Couldn't direct_set matrix");
+                    self.direct_set(*m, k)?;
                 }
                 CacheType::Matrix2(m) => {
-                    self.direct_set(*m, k)
-                        .expect("Couldn't direct_set matrix");
+                    self.direct_set(*m, k)?;
                 }
                 CacheType::Float(f) => {
-                    self.direct_set(*f, k).expect("Couldn't direct_set float");
+                    self.direct_set(*f, k)?;
                 }
                 CacheType::Int(i) => {
-                    self.direct_set(*i, k).expect("Couldn't direct_set int");
+                    self.direct_set(*i, k)?;
                 }
                 CacheType::UInt(u) => {
-                    self.direct_set(*u, k).expect("Couldn't direct_set uint");
+                    self.direct_set(*u, k)?;
                 }
                 CacheType::VecInt(v) => {
-                    self.direct_set(v.clone(), k)
-                        .expect("Couldn't direct_set vec int");
+                    self.direct_set(v.clone(), k)?;
                 }
                 CacheType::VecUInt(v) => {
-                    self.direct_set(v.clone(), k)
-                        .expect("Couldn't direct_set vec uint");
+                    self.direct_set(v.clone(), k)?;
                 }
                 CacheType::VecFloat(v) => {
-                    self.direct_set(v.clone(), k)
-                        .expect("Couldn't direct_set vec float");
+                    self.direct_set(v.clone(), k)?;
                 }
             }
         }
+        Ok(())
     }
 }
 pub enum MaybeColorTexture {
@@ -688,9 +541,50 @@ pub struct NarrowingMaterial {
     pub ambient_scaling: Option<MaybeTexture>,
     pub normal: Option<MaybeTexture>,
 }
+
+macro_rules! cvt_vals_to_shader {
+    ($var:expr ,$name:expr, $default:expr, $ret:expr, Vec) => {
+        match $var {
+            None => {
+                $ret.vector_values.insert($name.to_owned(), $default);
+            }
+            Some(enum_val) => match enum_val {
+                MaybeColorTexture::Texture(v) => {
+                    $ret.textures
+                        .insert($name.to_owned(), Shader::create_image_texture(v));
+                }
+                MaybeColorTexture::RGBA(v) => {
+                    $ret.vector_values.insert($name.to_owned(), v.to_vec());
+                }
+                MaybeColorTexture::RGB(v) => {
+                    $ret.vector_values
+                        .insert($name.to_owned(), vec![v[0], v[1], v[2], 1.0]);
+                }
+            },
+        }
+    };
+    ($var:expr ,$name:expr, $default:expr, $ret:expr, Val) => {
+        match $var {
+            None => {
+                $ret.values.insert($name.to_owned(), $default);
+            }
+            Some(enum_val) => match enum_val {
+                MaybeTexture::Texture(v) => {
+                    $ret.textures
+                        .insert("specular".to_owned(), Shader::create_image_texture(v));
+                }
+                MaybeTexture::Value(v) => {
+                    $ret.values.insert("specular".to_owned(), v);
+                }
+            },
+        }
+    };
+}
 impl NarrowingMaterial {
-    pub(crate) fn from_obj_mtl(mtl: obj::raw::material::Material) -> NarrowingMaterial {
-        let mut ret = NarrowingMaterial {
+    /// # Panics
+    /// If the material cannot be created from the obj material.
+    pub(crate) fn from_obj_mtl(mtl: &Material) -> Self {
+        let mut ret = Self {
             diffuse: None,
             emissive: None,
             specular: None,
@@ -700,31 +594,34 @@ impl NarrowingMaterial {
             normal: None,
         };
         if mtl.diffuse.is_some() {
-            let diff = from_color(mtl.diffuse);
+            let diff = from_color(&mtl.diffuse);
             let new_diff = [diff[0], diff[1], diff[2], 1.0];
             ret.diffuse = Some(MaybeColorTexture::RGBA(new_diff));
         }
         if mtl.emissive.is_some() {
-            let emis = from_color(mtl.emissive);
+            let emis = from_color(&mtl.emissive);
             let new_emis = [emis[0], emis[1], emis[2], 1.0];
             ret.emissive = Some(MaybeColorTexture::RGBA(new_emis));
         }
         if mtl.optical_density.is_some() {
             let specular = ((mtl.optical_density.unwrap() - 1.0)
                 / (mtl.optical_density.unwrap() + 1.0))
-                .powf(2.0)
+                .powi(2)
                 / 0.08;
             ret.specular = Some(MaybeTexture::Value(specular));
         }
         ret
         // todo: provide waay better support for this.
     }
+    /// # Errors
+    /// Returns an error if the material cannot be created from the glTF material.
+    #[allow(clippy::unnecessary_wraps)]
     pub(crate) fn from_gltf_mtl(
-        material: gltf::Material,
+        material: &gltf::Material,
         images: &[gltf::image::Data],
         buffers: &[gltf::buffer::Data],
         base_path: &str,
-    ) -> Result<NarrowingMaterial, Box<dyn Error>> {
+    ) -> Result<Self, Box<dyn Error>> {
         macro_rules! texture_or_factor {
             ($property:expr, $texture_source:expr, $factor_source:expr, $texture_enum:path, $factor_enum:path) => {
                 if let Some(inner_texture) = $texture_source {
@@ -751,7 +648,7 @@ impl NarrowingMaterial {
                 }
             };
         }
-        let mut ret = NarrowingMaterial {
+        let mut ret = Self {
             diffuse: None,
             emissive: None,
             specular: None,
@@ -801,14 +698,14 @@ impl NarrowingMaterial {
         Ok(ret)
     }
     pub(crate) fn with_path(self, base_path: &str) -> Result<Shader, Box<dyn Error>> {
-        let vert_string = base_path.to_owned().clone() + ".vert";
-        let vert_source = load_file(vert_string).to_str().unwrap().to_owned();
-        let frag_string = base_path.to_owned().clone() + ".frag";
-        let frag_source = load_file(frag_string).to_str().unwrap().to_owned();
+        let vert_string = base_path.to_owned() + ".vert";
+        let vert_source = load_file(vert_string).to_str()?.to_owned();
+        let frag_string = base_path.to_owned() + ".frag";
+        let frag_source = load_file(frag_string).to_str()?.to_owned();
         let debug_sources = vec![
-            CString::new(vert_source.clone()).unwrap(),
-            CString::new(frag_source.clone()).unwrap(),
-            CString::new("").unwrap(),
+            CString::new(vert_source.clone())?,
+            CString::new(frag_source.clone())?,
+            CString::new("")?,
         ];
         let mut ret = self.into_shader(vert_source, frag_source)?;
         ret.debug_sources.extend(debug_sources);
@@ -826,62 +723,15 @@ impl NarrowingMaterial {
             optionals: 0,
             textures: HashMap::new(),
             vector_values: HashMap::new(),
-            values: Default::default(),
+            values: HashMap::default(),
             debug_sources: vec![],
             program: None,
-            cache: Default::default(),
+            cache: HashMap::default(),
         };
-        match self.diffuse {
-            None => {
-                ret.vector_values.insert("diffuse".to_owned(), vec![0.5; 3]);
-            }
-            Some(enum_val) => match enum_val {
-                MaybeColorTexture::Texture(v) => {
-                    ret.textures
-                        .insert("diffuse".to_owned(), Shader::create_image_texture(v));
-                }
-                MaybeColorTexture::RGBA(v) => {
-                    ret.vector_values.insert("diffuse".to_owned(), v.to_vec());
-                }
-                MaybeColorTexture::RGB(v) => {
-                    ret.vector_values
-                        .insert("diffuse".to_owned(), vec![v[0], v[1], v[2], 1.0]);
-                }
-            },
-        }
-        match self.specular {
-            None => {
-                ret.values.insert("specular".to_owned(), 1.0);
-            }
-            Some(enum_val) => match enum_val {
-                MaybeTexture::Texture(v) => {
-                    ret.textures
-                        .insert("specular".to_owned(), Shader::create_image_texture(v));
-                }
-                MaybeTexture::Value(v) => {
-                    ret.values.insert("specular".to_owned(), v);
-                }
-            },
-        }
-        match self.emissive {
-            None => {
-                ret.vector_values
-                    .insert("emissive".to_owned(), vec![0.0; 4]);
-            }
-            Some(enum_val) => match enum_val {
-                MaybeColorTexture::Texture(v) => {
-                    ret.textures
-                        .insert("emissive".to_owned(), Shader::create_image_texture(v));
-                }
-                MaybeColorTexture::RGBA(v) => {
-                    ret.vector_values.insert("emissive".to_owned(), v.to_vec());
-                }
-                MaybeColorTexture::RGB(v) => {
-                    ret.vector_values
-                        .insert("emissive".to_owned(), vec![v[0], v[1], v[2], 1.0]);
-                }
-            },
-        }
+        cvt_vals_to_shader!(self.diffuse, "diffuse", vec![0.5; 3], ret, Vec);
+        cvt_vals_to_shader!(self.specular, "specular", 1.0, ret, Val);
+        cvt_vals_to_shader!(self.emissive, "emissive", vec![0.0; 4], ret, Vec);
+
         let mut locations =
             "layout (location = 0) in vec3 aPos;\nlayout (location = 1) in vec3 aNormal;\n"
                 .to_owned();
@@ -890,9 +740,6 @@ impl NarrowingMaterial {
         let uniforms = "uniform mat4 model;";
         let std140s =
             "layout (std140) uniform Matrices {vec3 cameraPos;\nmat4 view;\nmat4 projection;\n};\nlayout (std140, binding=1) uniform World {vec4 ambient;};";
-        // if mtl.diffuse_map.clone().is_some()
-        //     || mtl.specular_map.clone().is_some()
-        //     || mtl.emissive_map.is_some()
         if !ret.textures.is_empty() {
             locations += "layout (location = 2) in vec2 aTexCoord;";
             passthroughs = "vs_out.TexCoord = aTexCoord;";
@@ -902,42 +749,33 @@ impl NarrowingMaterial {
         vert_source = vert_source.replace("//T: PASSTHROUGHS", passthroughs);
         vert_source = vert_source.replace(
             "//T: OUT",
-            format!("out VS_OUT {{\n{}}} vs_out;", outs).as_str(),
+            format!("out VS_OUT {{\n{outs}}} vs_out;").as_str(),
         );
         vert_source = vert_source.replace("//T: UNIFORMS", uniforms);
         vert_source = vert_source.replace("//T: STD140", std140s);
 
-        frag_source = frag_source.replace(
-            "//T: IN",
-            format!("in VS_OUT {{\n{}}} fs_in;", outs).as_str(),
-        );
+        frag_source =
+            frag_source.replace("//T: IN", format!("in VS_OUT {{\n{outs}}} fs_in;").as_str());
         frag_source = frag_source.replace("//T: OUT", "out vec4 FragColor;");
         frag_source = frag_source.replace("//T: STD140", std140s);
-        let mut textures = "".to_owned();
-        let mut uniforms = "".to_owned();
-        let mut logic = "".to_owned();
+        let mut textures = String::new();
+        let mut uniforms = String::new();
+        let mut logic = String::new();
         for i in ["diffuse", "emissive"] {
             if ret.textures.contains_key(i) {
-                logic.push_str("vec4 ");
-                logic.push_str(i);
-                logic.push_str(" = texture(");
-                logic.push_str(i);
-                logic.push_str(", fs_in.TexCoord);\n");
+                logic.push_str(format!("vec4 {i} = texture({i}), fs_in.TexCoord);\n").as_str());
             } else {
-                uniforms.push_str("uniform vec4 ");
-                uniforms.push_str(i);
-                uniforms.push_str(";\n");
+                uniforms.push_str(format!("uniform vec4 {i};\n").as_str());
             }
         }
         ret.values.insert("specular_exponent".to_owned(), 256.0);
         for i in ret.values.keys() {
-            uniforms.push_str(format!("uniform float {};\n", i).as_str());
+            uniforms.push_str(format!("uniform float {i};\n").as_str());
         }
         for i in 0..ret.textures.len() {
-            let texture_name = ret.textures.keys().nth(i).unwrap();
-            let mut texture = format!("layout (binding={i}) uniform sampler2D ").to_owned();
-            texture.push_str(&texture_name.clone());
-            texture.push_str(";\n");
+            let texture_name = ret.textures.keys().nth(i).ok_or("Couldn't get texture")?;
+            let mut texture =
+                format!("layout (binding={i}) uniform sampler2D {texture_name};\n").to_owned();
             textures.push_str(&texture);
         }
         frag_source = frag_source.replace("//T: TEXTURES", textures.as_str());
@@ -946,9 +784,9 @@ impl NarrowingMaterial {
         debug!("frag_source: {}", frag_source);
         debug!("vert_source: {}", vert_source);
         ret.program = Some(ret.compile(
-            CString::new(vert_source).expect("Failed to create CString"),
-            CString::new(frag_source).expect("Failed to create CString"),
-            CString::new("").expect("Failed to create CString"),
+            CString::new(vert_source)?,
+            CString::new(frag_source)?,
+            CString::new("")?,
         )?);
         ret.use_();
         for (i, v) in ret.vector_values.clone() {
@@ -960,7 +798,7 @@ impl NarrowingMaterial {
         }
         for (i, v) in ret.values.clone() {
             let os = i.clone();
-            ret.set(v, os.as_str()).expect("Failed to set values");
+            ret.set(v, os.as_str())?;
         }
         Shader::clear_shader();
         ret.check_optionals();

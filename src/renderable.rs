@@ -1,15 +1,15 @@
-use std::any::Any;
 use crate::derive_transformable;
-use crate::glutil::{BufferObject, GLBuffer, GLObject, VertexArrayObject, VAA};
+use crate::glutil::{BufferObject, GLBuffer, GLObject, Vaa, VertexArrayObject};
 use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager, ShaderPtr};
 use crate::transformation::{Transform, Transformable};
 use crate::util::find_gl_error;
 use cgmath::{Vector2, Vector3};
-use gl::types::{GLenum, GLsizei, GLuint};
+use gl::types::{GLenum, GLuint};
 use gl::{ARRAY_BUFFER, FLOAT, STATIC_DRAW, TRIANGLES, TRIANGLE_FAN, UNSIGNED_INT};
 use itertools::Itertools;
 use obj::raw::{parse_mtl, parse_obj};
 use obj::{FromRawVertex, TexturedVertex};
+use std::any::Any;
 use std::error::Error;
 use std::ffi::{c_float, c_uint};
 use std::fs::File;
@@ -19,6 +19,9 @@ use std::path::Path;
 use std::ptr::null;
 
 pub trait Render: Transformable {
+    /// Renders the object using the given shader.
+    /// # Errors
+    /// If the rendering fails, it will return a `Box<dyn Error>`.
     fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>>;
     fn is(&self) -> bool;
     fn set_is(&mut self, val: bool);
@@ -72,24 +75,24 @@ impl Transformable for InstancedObject {
 }
 
 impl Render for InstancedObject {
-    fn render(&mut self, shader_override: Option<ShaderPtr>) -> Result<(), Box<dyn Error>> {
+    fn render(&mut self, _: Option<ShaderPtr>) -> Result<(), Box<dyn Error>> {
         if self.transforms.is_empty() {
             return Ok(());
         }
-        self.buffer_data();
+        self.buffer_data()?;
 
         let mut shader = self.shader.borrow_mut();
         shader.use_();
-        shader.update().expect("Shader failed to update.");
+        shader.update().expect("Shader should update.");
 
         unsafe {
             self.mesh.vertex_array.bind();
             gl::DrawElementsInstanced(
                 self.draw_type,
-                self.mesh.vertices.len() as GLsizei,
+                i32::try_from(self.mesh.vertices.len())?,
                 UNSIGNED_INT,
                 null(),
-                self.transforms.len() as GLsizei,
+                i32::try_from(self.transforms.len())?,
             );
             self.mesh.vertex_array.unbind();
         }
@@ -115,9 +118,11 @@ pub struct InstancedObject {
     colors: Vec<[f32; 4]>,
     shader: ShaderPtr,
     is: bool,
-    draw_type: GLenum
+    draw_type: GLenum,
 }
 impl InstancedObject {
+    /// # Panics
+    /// If the mesh data cannot be initialized.
     pub fn new(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
@@ -132,7 +137,7 @@ impl InstancedObject {
             transforms,
             colors,
             is: true,
-            draw_type: TRIANGLE_FAN
+            draw_type: TRIANGLE_FAN,
         };
         ret.mesh
             .vertex_array
@@ -146,12 +151,12 @@ impl InstancedObject {
         unsafe {
             let vertex_data = ret.mesh.build_vertex_data();
             let structure = vec![
-                VAA::new(FLOAT, 3, 0), // Pos
-                VAA::new(FLOAT, 4, 1), // Matrix row 1
-                VAA::new(FLOAT, 4, 1), // Matrix row 2
-                VAA::new(FLOAT, 4, 1), // Matrix row 3
-                VAA::new(FLOAT, 4, 1), // Matrix row 4
-                VAA::new(FLOAT, 4, 2), // Color
+                Vaa::new(FLOAT, 3, 0), // Pos
+                Vaa::new(FLOAT, 4, 1), // Matrix row 1
+                Vaa::new(FLOAT, 4, 1), // Matrix row 2
+                Vaa::new(FLOAT, 4, 1), // Matrix row 3
+                Vaa::new(FLOAT, 4, 1), // Matrix row 4
+                Vaa::new(FLOAT, 4, 2), // Color
             ];
             ret.mesh
                 .vertex_array
@@ -166,7 +171,7 @@ impl InstancedObject {
                 .buffer_data(ret.mesh.indices.as_slice(), STATIC_DRAW)
                 .expect("Failed to buffer index data");
 
-            ret.buffer_data();
+            ret.buffer_data().expect("Data should have buffered.");
 
             ret.mesh
                 .vertex_array
@@ -182,31 +187,27 @@ impl InstancedObject {
         ret
     }
 
-    fn buffer_data(&mut self) {
+    /// # Errors
+    /// If the data cannot be buffered.
+    fn buffer_data(&mut self) -> Result<(), Box<dyn Error>> {
         // Buffer transform matrices
-        let mats =
-            self.transforms
-                .iter()
-                .map(|it| it.mat())
-                .collect_vec();
+        let mats = self.transforms.iter().map(Transform::mat).collect_vec();
         self.mesh.vertex_array.vbos[1]
-            .buffer_data(
-                mats.as_slice(),
-                STATIC_DRAW,
-            )
-            .expect("Failed to buffer transform data");
+            .buffer_data(mats.as_slice(), STATIC_DRAW)
+            .map_err(|_| "Failed to buffer transform data")?;
 
         // Buffer colors
         self.mesh.vertex_array.vbos[2]
             .buffer_data(self.colors.as_slice(), STATIC_DRAW)
-            .expect("Failed to buffer color data");
+            .map_err(|_| "Failed to buffer color data")?;
+        Ok(())
     }
     pub fn set_data(&mut self, transforms: Vec<Transform>, colors: Vec<[f32; 4]>) {
         self.transforms = transforms;
         self.colors = colors;
     }
 
-    pub fn set_draw_type(&mut self, draw_type: GLenum) {
+    pub const fn set_draw_type(&mut self, draw_type: GLenum) {
         self.draw_type = draw_type;
     }
 }
@@ -218,13 +219,13 @@ pub struct MeshData {
     pub normals: Option<Vec<Vector3<f32>>>,
 }
 impl MeshData {
-    pub fn new(
+    #[must_use] pub fn new(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
         normals: Option<Vec<Vector3<f32>>>,
         tex_coords: Option<Vec<Vector2<f32>>>,
-    ) -> MeshData {
-        MeshData {
+    ) -> Self {
+        Self {
             vertices,
             indices,
             tex_coords,
@@ -232,14 +233,17 @@ impl MeshData {
             vertex_array: VertexArrayObject::new(),
         }
     }
+    /// Initializes the mesh data by generating the vertex array object and buffering the vertex data.
+    /// # Errors
+    /// If the OpenGL function fails, it will return a `Box<dyn Error>`.
     pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
         let vertex_data = self.build_vertex_data();
-        let mut structure = vec![VAA::new(FLOAT, 3, 0)];
+        let mut structure = vec![Vaa::new(FLOAT, 3, 0)];
         if self.normals.is_some() {
-            structure.push(VAA::new(FLOAT, 3, 0))
+            structure.push(Vaa::new(FLOAT, 3, 0));
         }
         if self.tex_coords.is_some() {
-            structure.push(VAA::new(FLOAT, 3, 0));
+            structure.push(Vaa::new(FLOAT, 3, 0));
         }
         self.vertex_array.generate()?;
         self.vertex_array.vbos[0].buffer_data(vertex_data.as_slice(), STATIC_DRAW)?;
@@ -250,7 +254,7 @@ impl MeshData {
         Ok(())
     }
 
-    fn build_vertex_data(&mut self) -> Vec<f32> {
+    fn build_vertex_data(&self) -> Vec<f32> {
         let mut vertex_data = Vec::new();
         for i in 0..self.vertices.len() {
             vertex_data.push(self.vertices[i].x);
@@ -264,7 +268,7 @@ impl MeshData {
             if let Some(d) = &self.tex_coords {
                 vertex_data.push(d[i].x);
                 vertex_data.push(d[i].y);
-                vertex_data.push(0.0)
+                vertex_data.push(0.0);
             }
         }
         vertex_data
@@ -280,27 +284,34 @@ pub struct Renderable {
 }
 impl Renderable {
     /// Creates a new Renderable with the given vertices, indices, normals and shader.
+    /// # Panics
+    /// If the mesh data cannot be initialized.
     pub(crate) fn new_with_tex(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
         normals: Vec<Vector3<f32>>,
         tex_coords: Vec<Vector2<f32>>,
         shader: &ShaderPtr,
-    ) -> Renderable {
+    ) -> Self {
         let mut ret = Self::only_data(vertices, indices, Some(normals), shader);
         ret.mesh_data.tex_coords = Some(tex_coords);
-        ret.mesh_data.init();
+        ret.mesh_data
+            .init()
+            .expect("Failed to initialize mesh data.");
         ret
     }
-
+    /// # Panics
+    /// If the mesh data cannot be initialized.
     pub fn new(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
         normals: Option<Vec<Vector3<f32>>>,
         shader: &ShaderPtr,
-    ) -> Renderable {
+    ) -> Self {
         let mut ret = Self::only_data(vertices, indices, normals, shader);
-        ret.mesh_data.init();
+        ret.mesh_data
+            .init()
+            .expect("Failed to initialize mesh data.");
         ret
     }
     fn only_data(
@@ -308,8 +319,8 @@ impl Renderable {
         indices: Vec<u32>,
         normals: Option<Vec<Vector3<f32>>>,
         shader: &ShaderPtr,
-    ) -> Renderable {
-        Renderable {
+    ) -> Self {
+        Self {
             mesh_data: MeshData::new(vertices, indices, normals, None),
             shader: shader.clone(),
             transform: Transform::default(),
@@ -318,14 +329,16 @@ impl Renderable {
         }
     }
 
+    /// # Errors
+    /// If the object cannot be created from the given path or shader path.
     pub fn from_obj(
         path: &str,
         shaderpath: &str,
         manager: &mut ShaderManager,
-    ) -> Result<Renderable, Box<dyn Error>> {
-        let path_dir = Path::new(path).parent().expect("Jimbo jones the second");
-        let input = BufReader::new(File::open(path).expect("Jimbo jones again!"));
-        let obj = parse_obj(input).expect("Jimb jones the third");
+    ) -> Result<Self, Box<dyn Error>> {
+        let path_dir = Path::new(path).parent().ok_or("Invalid path")?;
+        let input = BufReader::new(File::open(path)?);
+        let obj = parse_obj(input).map_err(|_| "Couldn't parse obj!")?;
         // let parsed_obj: Obj<TexturedVertex> = Obj::new(obj).expect("Jimbo jones the fourth");
         let (vertices, indices) = FromRawVertex::<u32>::process(
             obj.positions,
@@ -334,13 +347,13 @@ impl Renderable {
             obj.polygons,
         )
         .map_err(|_| "Couldn't process vertices")?;
-
+        let path_str = path_dir.to_str().ok_or("Invalid path")?;
         let raw_mtl = parse_mtl(BufReader::new(
-            File::open((path_dir.to_str().unwrap().to_owned()) + "/" + &obj.material_libraries[0])
+            File::open((path_str.to_owned()) + "/" + &obj.material_libraries[0])
                 .map_err(|_| {
                     format!(
                         "Cannot find file {}",
-                        path_dir.to_str().unwrap().parse::<String>().unwrap()
+                        path_str.to_owned()
                             + "/"
                             + &obj.material_libraries[0]
                     )
@@ -348,11 +361,11 @@ impl Renderable {
         ))
         .map_err(|_| "Couldn't parse mtl!")?;
         let mat =
-            NarrowingMaterial::from_obj_mtl(raw_mtl.materials.get("Material.001").unwrap().clone());
+            NarrowingMaterial::from_obj_mtl(&raw_mtl.materials.get("Material.001").ok_or("Couldn't get material")?.clone());
         let new_shader = mat.with_path(shaderpath)?;
 
         // let new_shader = Shader::load_from_path("shaders/comp_base_shader");
-        Ok(Renderable::new_with_tex(
+        Ok(Self::new_with_tex(
             vertices.iter().map(Vector3::from_vertex).collect(),
             indices,
             vertices.iter().map(Vector3::from_vertex).collect(),
@@ -384,7 +397,7 @@ impl Render for Renderable {
             find_gl_error()?;
             gl::DrawElements(
                 self.draw_type,
-                (self.mesh_data.indices.len() * size_of::<GLuint>()) as GLsizei,
+                i32::try_from(self.mesh_data.indices.len() * size_of::<GLuint>())?,
                 UNSIGNED_INT,
                 null(),
             );
@@ -414,16 +427,19 @@ pub struct RenderableGroup {
     is: bool,
 }
 impl RenderableGroup {
+    /// Creates a new `RenderableGroup` with the given renderables.
+    /// # Errors
+    /// If the renderables cannot be created from the given path or shader path.
     pub fn from_gltf(
         path: &str,
         shaderpath: &str,
         shader_manager: &mut ShaderManager,
-    ) -> Result<RenderableGroup, Box<dyn Error>> {
-        let mut ancestors = Path::new(path).ancestors().to_owned();
+    ) -> Result<Self, Box<dyn Error>> {
+        let mut ancestors = Path::new(path).ancestors();
         let mut base = "";
         ancestors.next();
         if let Some(root) = ancestors.next() {
-            base = root.to_str().expect("Should be a string.");
+            base = root.to_str().ok_or("Should be a string.")?;
         }
 
         let (document, buffers, images) = gltf::import(path)?;
@@ -431,36 +447,37 @@ impl RenderableGroup {
         let mut renderables: Vec<Renderable> = Vec::new();
         let mut materials: Vec<ShaderPtr> = Vec::new();
         for i in document.materials() {
-            let mat = NarrowingMaterial::from_gltf_mtl(i, &images, &buffers, base)?;
+            let mat = NarrowingMaterial::from_gltf_mtl(&i, &images, &buffers, base)?;
             materials.push(shader_manager.register(mat.with_path(shaderpath)?));
         }
         for mesh in document.meshes() {
             for primitive in mesh.primitives() {
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
                 let vertices: Vec<Vector3<c_float>> =
-                    reader.read_positions().unwrap().map_into().collect();
-                let indices: Vec<c_uint> = reader.read_indices().unwrap().into_u32().collect();
+                    reader.read_positions().ok_or("Couldn't read positions")?.map_into().collect();
+                let indices: Vec<c_uint> = reader.read_indices().ok_or("Couldn't read indices")?.into_u32().collect();
                 let tex_coords: Vec<Vector2<c_float>> = reader
                     .read_tex_coords(0)
-                    .unwrap()
+                    .ok_or("Couldn't read texture coordinates")?
                     .into_f32()
                     .map_into()
                     .collect(); //TODO: add multiple sets
                 let normals: Vec<Vector3<c_float>> =
-                    reader.read_normals().unwrap().map_into().collect();
-                let material = materials[primitive.material().index().unwrap()].clone();
+                    reader.read_normals().ok_or("Couldn't read normals")?.map_into().collect();
+                let material = materials[primitive.material().index().ok_or("couldn't read index")?].clone();
 
                 renderables.push(Renderable::new_with_tex(
                     vertices, indices, normals, tex_coords, &material,
                 ));
             }
         }
-        Ok(RenderableGroup {
+        Ok(Self {
             renderables,
             is: true,
         })
     }
-    pub fn create_grid(
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use] pub fn create_grid(
         width: u32,
         length: u32,
         scale: f32,
@@ -474,9 +491,9 @@ impl RenderableGroup {
         for i in 0..width {
             for j in 0..length {
                 vertices.push(Vector3::new(
-                    (i as f32 * scale) + pos.x,
+                    (i as f32).mul_add(scale, pos.x),
                     0.0,
-                    j as f32 * scale + pos.y,
+                    (j as f32).mul_add(scale, pos.y),
                 ));
                 normals.push(Vector3::new(0.0, 1.0, 0.0));
                 if i != 0 && j != 0 {
@@ -500,7 +517,7 @@ impl Render for RenderableGroup {
             return Ok(());
         }
         self.renderables.iter_mut().try_for_each(|r| {
-            let shader = shader_override.as_ref().map(|x| x.clone());
+            let shader = shader_override.as_ref().map(std::clone::Clone::clone);
             r.render(shader)
         })
     }

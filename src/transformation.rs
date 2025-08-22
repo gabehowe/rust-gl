@@ -2,8 +2,8 @@ extern crate proc_macro;
 use std::mem::size_of;
 use std::ptr::null;
 
-use crate::util::find_gl_error;
-use cgmath::{perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, One, Point3, Rad, SquareMatrix, Vector2, Vector3, Zero};
+use crate::util::{find_gl_error, GLFunctionError};
+use cgmath::{perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, Point3, Rad, Vector2, Vector3, Zero};
 use gl::types::{GLsizeiptr, GLuint};
 use gl::{STATIC_DRAW, UNIFORM_BUFFER};
 use imgui::sys::cty::c_double;
@@ -49,31 +49,31 @@ pub struct Transform {
 }
 
 impl Transform {
-    pub fn new() -> Self {
-        Transform {
+    #[must_use] pub fn new() -> Self {
+        Self {
             position: Vector3::zero(),
             rotation: Vector3::zero(),
             scale: Vector3::new(1.0, 1.0, 1.0),
         }
     }
 
-    pub fn with_position(position: Vector3<f32>) -> Self {
-        Transform {
+    #[must_use] pub fn with_position(position: Vector3<f32>) -> Self {
+        Self {
             position,
             rotation: Vector3::zero(),
             scale: Vector3::new(1.0, 1.0, 1.0),
         }
     }
 
-    pub fn with_scale(scale: Vector3<f32>) -> Self {
-        Transform {
+    #[must_use] pub fn with_scale(scale: Vector3<f32>) -> Self {
+        Self {
             position: Vector3::zero(),
             rotation: Vector3::zero(),
             scale,
         }
     }
 
-    pub fn mat(&self) -> Matrix4<f32> {
+    #[must_use] pub fn mat(&self) -> Matrix4<f32> {
         let translation =Matrix4::from_translation(self.position);
         let scale = Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z);
         let rotation = Matrix4::from(Euler::new(
@@ -183,8 +183,8 @@ impl Default for Camera {
 }
 
 impl Camera {
-    pub fn new() -> Camera {
-        Camera {
+    #[must_use] pub fn new() -> Self {
+        Self {
             pos: Vector3::new(0f32, 0f32, 0f32),
             rot: Vector2::new(0.0, 0.00),
             //     Point3::new(1f32, 1f32, 0f32),
@@ -236,9 +236,10 @@ impl Camera {
         );
     }
 
-    pub fn update_buffers(&mut self) {
+    pub fn update_buffers(&mut self) -> Result<(), GLFunctionError> {
         let mut offset = 0;
         unsafe {
+            // TODO: Pull this into glutil
             gl::BindBuffer(UNIFORM_BUFFER, self.uniform_buffer);
             gl::BufferSubData(
                 UNIFORM_BUFFER,
@@ -262,13 +263,7 @@ impl Camera {
             );
             gl::BindBuffer(UNIFORM_BUFFER, 0);
         }
-        find_gl_error().unwrap();
-        // println!("{:?}", std::mem::size_of::<Matrix4<f32>>());
-        // gl::GetBufferSubData(UNIFORM_BUFFER, offset, (1 * std::mem::size_of::<Matrix4<f32>>()) as GLsizeiptr, transmute(&self.pos[0]));
-        // println!("{:?} {:?}", self.view.x, self.projection.x);
-        // println!("{:?} {:?}", self.view.y, self.projection.y);
-        // println!("{:?} {:?}", self.view.z, self.projection.z);
-        // println!("{:?} {:?}", self.view.w, self.projection.w);
+        find_gl_error()
     }
 
     pub fn handle_mouse(&mut self, x: c_double, y: c_double) {

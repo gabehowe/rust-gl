@@ -1,13 +1,13 @@
-use cgmath::{vec3, Vector3, Zero};
+use cgmath::{vec3, Vector3};
 use glfw::CursorMode;
 use imgui::{Condition, Ui};
 use obj::raw::parse_obj;
-use obj::{FromRawVertex, Position, TexturedVertex};
-use rust_gl::shader::{FromVertex, SetValue, Shader};
+use obj::{FromRawVertex, TexturedVertex};
+use rust_gl::shader::{FromVertex, SetValue};
 use std::fs::File;
 use std::io::BufReader;
 use gl::TRIANGLES;
-use rust_gl::renderable::{InstancedObject, MeshData, Renderable};
+use rust_gl::renderable::{InstancedObject, Renderable};
 use rust_gl::transformation::{Transform, Transformable};
 use rust_gl::{Data, Engine};
 
