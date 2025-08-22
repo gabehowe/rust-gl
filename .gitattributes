@@ -1,1 +1,5 @@
+1751145359468.png filter=lfs diff=lfs merge=lfs -text
+image.png filter=lfs diff=lfs merge=lfs -text
+img.png filter=lfs diff=lfs merge=lfs -text
+mandelbrot.png filter=lfs diff=lfs merge=lfs -text
 *.obj filter=lfs diff=lfs merge=lfs -text
