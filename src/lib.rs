@@ -120,11 +120,11 @@ impl Data {
     /// If wireframe is true, uses the wireframe shader instead of the object's shader.
     /// # Errors
     /// Returns an error if any renderable fails to render.
-    fn render(&mut self, wireframe: bool) -> Result<(), Box<dyn Error>> {
+    fn render(&mut self, wireframe: bool, clear_color: (f32, f32, f32, f32)) -> Result<(), Box<dyn Error>> {
         // Safety: We know that the key is a valid key because we are using the glfw::Key enum.
         unsafe {
             if self.should_clear {
-                gl::ClearColor(CLEARCOLOR.0, CLEARCOLOR.1, CLEARCOLOR.2, CLEARCOLOR.3);
+                gl::ClearColor(clear_color.0, clear_color.1, clear_color.2, clear_color.3);
                 gl::Clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
             }
         }
@@ -293,6 +293,7 @@ pub struct Engine {
     pub frame_index: u32,
     /// Current window size [width, height]
     pub size: [usize; 2],
+    pub clear_color: (f32, f32,f32,f32)
 }
 
 /// Implementation of the Engine structure
@@ -313,7 +314,52 @@ impl Engine {
     ///
     /// Convenience method that delegates to `Data::add_renderable_rc`
     pub fn add_renderable_rc(&mut self, renderable: &RenderablePtr) {
-        self.data.add_renderable_rc(renderable);
+        self.data.add_renderable_rc(renderable)
+    }
+    pub fn new(imgui: bool, window_name: &str) -> Result<Engine, Box<dyn Error>> {
+        let (glfw, mut window, events) = init_gflw(window_name);
+        let camera = Engine::init_gl();
+        unsafe {
+            // dunno why these are here.
+            gl::GetString(gl::VERSION);
+            gl::GetString(gl::RENDERER);
+        }
+        let mut event_handler = EventHandler::raw();
+        if imgui {
+            event_handler = EventHandler::new(&mut window);
+        }
+        let mut shader_manager = ShaderManager::new();
+        let mat = NarrowingMaterial {
+            diffuse: Some(MaybeColorTexture::RGBA([0.0, 1.0, 0.0, 1.0])),
+            emissive: None,
+            specular: None,
+            metallic: None,
+            roughness: None,
+            ambient_scaling: None,
+            normal: None,
+        };
+        let wireframe_id = shader_manager.register(mat.into_shader(
+            include_str!("../shaders/base_shader.vert").to_string(),
+            include_str!("../shaders/base_shader.frag").to_string(),
+        )?);
+        Ok(Engine {
+            glfw,
+            window,
+            events,
+            frametime: 0.0,
+            data: Data {
+                renderables: Vec::new(),
+                camera,
+                shader_manager,
+                wireframe_shader: wireframe_id,
+                frame_buffer_texture: None,
+                should_clear: true,
+            },
+            event_handler,
+            frame_index: 0,
+            size: [WIDTH, HEIGHT],
+            clear_color: CLEARCOLOR
+        })
     }
 
     /// Captures the current frame and saves it to a file
@@ -473,6 +519,48 @@ impl Engine {
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
         }
         camera
+    }
+
+    pub fn should_keep_running(&self) -> bool {
+        !self.window.should_close()
+    }
+
+    pub fn update<F>(&mut self, mut imgui_callback: F)
+    where
+        F: FnMut(&mut Ui, f64, &mut Data),
+    {
+        self.frame_index += 1;
+        self.event_handler.current_frame_time = self.get_time();
+
+        self.data.handle_input(&self.window, self.frametime);
+        self.data
+            .render(self.event_handler.wireframe, self.clear_color)
+            .expect("failed to render.");
+        // Allow for disabling imgui
+        if self.event_handler.imgui.is_some() && self.event_handler.show_imgui {
+            let imgui_glfw_ref = self.event_handler.imgui_glfw.as_mut().unwrap();
+            let imgui_ref = self.event_handler.imgui.as_mut().unwrap();
+            let frame = imgui_ref.frame();
+            imgui_callback(frame, self.frametime, &mut self.data);
+            imgui_glfw_ref.draw(frame, &mut self.window);
+            imgui_glfw_ref.get_renderer().render(imgui_ref);
+        }
+
+        self.event_handler.events.clear();
+        self.process_glfw_events();
+        self.window.swap_buffers();
+        unsafe {
+            gl::Flush();
+        }
+
+        self.frametime = self.get_time() - self.event_handler.current_frame_time ;
+        self.event_handler.last_frame_time = self.event_handler.current_frame_time;
+        if self.event_handler.current_frame_time - self.event_handler.last_tick > 1.0 {
+            self.event_handler.last_tick = self.event_handler.current_frame_time;
+            self.data.update().expect("Failed to update shaders.");
+        }
+        // let frame_rate = 1.0 / self.frametime;
+        // println!("Frame rate: {}", frame_rate);
     }
 
     /// Processes all pending GLFW events
