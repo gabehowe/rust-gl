@@ -1,7 +1,6 @@
 target/
 .idea/
 target
-objects/
 /screenshots/
 .gproj
 start
