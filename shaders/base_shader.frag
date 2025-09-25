@@ -1,17 +1,36 @@
 #version 460 core
 //processed
-//T: STD140
+// STD140s
+layout (std140) uniform Matrices {
+	vec3 cameraPos;
+	mat4 view;
+	mat4 projection;
+};
+layout (std140, binding=1) uniform World {
+	vec4 ambient;
+};
 
-//T: IN
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
+#ifdef TEXTURES
+layout (location = 2) in vec2 aTexCoord;
+#endif
 
-//T: OUT
 
-//T: UNIFORMS
+
+
+out vec4 FragColor;
+
+
+uniform mat4 model;
 
 //T: TEXTURES
 
 void main() {
     //T: LOGIC
+#ifdef TEXTURES
+	vs_out.TexCoord = aTexCoord;
+#endif
     vec3 lightPos = vec3(-10.0f, 15.0f, 1.0f);
     vec3 lightDir = normalize(lightPos - fs_in.FragPos);
     vec3 normal = normalize(cross(dFdx(fs_in.FragPos), dFdy(fs_in.FragPos)));
