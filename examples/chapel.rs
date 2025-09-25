@@ -1,3 +1,5 @@
+/// Chapel Example
+/// Loads the chapel GLB and renders it using a dynamically generated shader.
 use cgmath::{perspective, vec3, Deg, Vector2, Vector3, Zero};
 use glfw::CursorMode;
 use imgui::{Condition, Ui};
