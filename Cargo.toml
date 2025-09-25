@@ -26,3 +26,6 @@ log = "0.4.21"
 gltf = { version = "1.4.1", features = ["KHR_materials_specular"] }
 itertools = "0.12.1"
 rand = "0.8.5"
+
+[build-dependencies]
+spirv-builder = "0.9"
