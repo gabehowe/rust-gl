@@ -1,20 +1,39 @@
 #version 460 core
 //processed
-//T: LOCATIONS
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
+#ifdef TEXTURES
+layout (location = 2) in vec2 aTexCoord;
+#endif
 
-//T: STD140
+layout (std140) uniform Matrices {
+	vec3 cameraPos;
+	mat4 view;
+	mat4 projection;
+};
+layout (std140, binding=1) uniform World {
+	vec4 ambient;
+};
 
-//T: UNIFORMS
+uniform mat4 model;
 
-//T: OUT
+out VS_OUT {
+	vec3 Normal;
+	vec3 FragPos;
+	float Time;
+#ifdef TEXTURES
+	vec2 TexCoord;
+#endif
+} vs_out;
+
 uniform float time;
+
 void main()
 {
-
-    //T: PASSTHROUGHS
-    //L: IF NORMAL
+#ifdef TEXTURES
+	 vs_out.TexCoord = aTexCoord;
+#endif
     vs_out.Normal = mat3(transpose(inverse(model))) * aNormal;
-    //L: ENDIF
     vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
     vs_out.Time = time;
     gl_Position = projection * view * model * vec4(aPos.xyz, 1.0);

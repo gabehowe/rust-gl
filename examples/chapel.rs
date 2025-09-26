@@ -87,7 +87,7 @@ fn main() {
 
     let renderable = engine
         .data
-        .add_renderable_from_obj("objects/chapel.obj", "shaders/base_shader" ).expect("Couldn't create object.");
+        .add_renderable_from_obj("objects/chapel.obj", "shaders/base_shader" ).expect("Failed to load renderable!");
     // TODO: Implement async loading
     renderable.borrow_mut().uniform_scale(0.1);
     renderable.borrow_mut().translate(20., 0.0, 0.0);
@@ -124,4 +124,5 @@ fn main() {
         // engine.data.renderables.get_mut(1).unwrap().rotate(0.0, 0.00, 0.01);
         renderable.borrow_mut().rotate(0.0, 0.00, 0.1 * engine.frametime as f32);
     }
+    println!("done!");
 }

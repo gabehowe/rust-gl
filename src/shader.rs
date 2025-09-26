@@ -128,7 +128,7 @@ impl ShaderManager {
     /// # Errors
     /// If the shader cannot be loaded from the path, it will return a `GLFunctionError`.
     pub fn load_from_path(&mut self, path: &str) -> Result<ShaderPtr, Box<dyn Error>> {
-        Ok(self.register(Shader::load_from_path(path)?))
+        Ok(self.register(Shader::load_from_path(path).inspect_err(|_| debug!("Failed to open {path}."))?))
     }
     #[must_use]
     pub const fn count(&self) -> usize {
@@ -264,19 +264,16 @@ impl Shader {
         frag_source: CString,
         geo_source: CString,
     ) -> Result<u32, Box<dyn Error>> {
-        let vert_program = Self::create_shader(VERTEX_SHADER)?;
-        let frag_program = Self::create_shader(FRAGMENT_SHADER)?;
+        let vert_program = Self::create_shader(VERTEX_SHADER).inspect_err(|_| {debug!{"VERT"}})?;
+        let frag_program = Self::create_shader(FRAGMENT_SHADER).inspect_err(|_| {debug!{"FRAG"}})?;
         let program = Self::create_program()?;
         if !geo_source.to_str()?.is_empty() {
             self.geo = unsafe { gl::CreateShader(gl::GEOMETRY_SHADER) };
             Self::compile_subshader(program, geo_source, self.geo)?;
         }
-        // println!("{:?}", self.geo);
-        // println!("{:?}", vert_source.to_str().unwrap().replace("\\n", "\r\n"));
-        // println!("{:?}", frag_source.to_str().unwrap().replace("\\n", "\r\n"));
 
-        Self::compile_subshader(program, vert_source, vert_program)?;
-        Self::compile_subshader(program, frag_source, frag_program)?;
+        Self::compile_subshader(program, vert_source, vert_program).inspect_err(|_| { debug!("VERT") })?;
+        Self::compile_subshader(program, frag_source, frag_program).inspect_err(|_| { debug!("FRAG") })?;
 
         unsafe {
             gl::LinkProgram(program);
@@ -350,11 +347,9 @@ impl Shader {
         }
     }
 
-    /**
-    Must be called use_ because use is a reserved keyword.
-    # Panics
-    If the program cannot be used.
-     */
+    /// Must be called use_ because use is a reserved keyword.
+    /// # Panics
+    /// If the program cannot be used.
     pub fn use_(&self) {
         if self.program.is_none() {
             return;
@@ -732,57 +727,20 @@ impl NarrowingMaterial {
         cvt_vals_to_shader!(self.specular, "specular", 1.0, ret, Val);
         cvt_vals_to_shader!(self.emissive, "emissive", vec![0.0; 4], ret, Vec);
 
-        let mut locations =
-            "layout (location = 0) in vec3 aPos;\nlayout (location = 1) in vec3 aNormal;\n"
-                .to_owned();
-        let mut passthroughs = "";
-        let mut outs = "vec3 Normal;\nvec3 FragPos;\nfloat Time;".to_owned();
-        let uniforms = "uniform mat4 model;";
-        let std140s =
-            "layout (std140) uniform Matrices {vec3 cameraPos;\nmat4 view;\nmat4 projection;\n};\nlayout (std140, binding=1) uniform World {vec4 ambient;};";
         if !ret.textures.is_empty() {
-            locations += "layout (location = 2) in vec2 aTexCoord;";
-            passthroughs = "vs_out.TexCoord = aTexCoord;";
-            outs += "vec2 TexCoord;";
+            let fmt_str = "#define TEXTURES 1\n";
+            vert_source.insert_str(vert_source.find('\n').unwrap()+1, fmt_str);
+            frag_source.insert_str(frag_source.find('\n').unwrap()+1, fmt_str);
         }
-        vert_source = vert_source.replace("//T: LOCATIONS", locations.as_str());
-        vert_source = vert_source.replace("//T: PASSTHROUGHS", passthroughs);
-        vert_source = vert_source.replace(
-            "//T: OUT",
-            format!("out VS_OUT {{\n{outs}}} vs_out;").as_str(),
-        );
-        vert_source = vert_source.replace("//T: UNIFORMS", uniforms);
-        vert_source = vert_source.replace("//T: STD140", std140s);
-
-        frag_source =
-            frag_source.replace("//T: IN", format!("in VS_OUT {{\n{outs}}} fs_in;").as_str());
-        frag_source = frag_source.replace("//T: OUT", "out vec4 FragColor;");
-        frag_source = frag_source.replace("//T: STD140", std140s);
-        let mut textures = String::new();
-        let mut uniforms = String::new();
-        let mut logic = String::new();
-        for i in ["diffuse", "emissive"] {
-            if ret.textures.contains_key(i) {
-                logic.push_str(format!("vec4 {i} = texture({i}), fs_in.TexCoord);\n").as_str());
-            } else {
-                uniforms.push_str(format!("uniform vec4 {i};\n").as_str());
-            }
+        for i in ret.textures.keys() {
+            let fmt_str = format!("#define {}_TEXTURE 1\n", i.to_uppercase());
+            vert_source.insert_str(vert_source.find('\n').unwrap()+1, fmt_str.as_str());
+            frag_source.insert_str(frag_source.find('\n').unwrap()+1, fmt_str.as_str());
         }
-        ret.values.insert("specular_exponent".to_owned(), 256.0);
-        for i in ret.values.keys() {
-            uniforms.push_str(format!("uniform float {i};\n").as_str());
-        }
-        for i in 0..ret.textures.len() {
-            let texture_name = ret.textures.keys().nth(i).ok_or("Couldn't get texture")?;
-            let mut texture =
-                format!("layout (binding={i}) uniform sampler2D {texture_name};\n").to_owned();
-            textures.push_str(&texture);
-        }
-        frag_source = frag_source.replace("//T: TEXTURES", textures.as_str());
-        frag_source = frag_source.replace("//T: LOGIC", logic.as_str());
-        frag_source = frag_source.replace("//T: UNIFORMS", uniforms.as_str());
-        debug!("frag_source: {}", frag_source);
-        debug!("vert_source: {}", vert_source);
+        let pretty_frag_source: String = frag_source.split('\n').enumerate().map(|(x, i)| {format!("\n\x1b[36m {x:01}\x1b[39m\x1b[49m: {i}")}).collect();
+        let pretty_vert_source: String = vert_source.split('\n').enumerate().map(|(x, i)| {format!("\n\x1b[36m {x:01}\x1b[39m\x1b[49m: {i}")}).collect();
+        debug!("frag_source: {pretty_frag_source}");
+        debug!("vert_source: {pretty_vert_source}");
         ret.program = Some(ret.compile(
             CString::new(vert_source)?,
             CString::new(frag_source)?,
@@ -793,7 +751,6 @@ impl NarrowingMaterial {
             let ov = v.clone();
             let vector = vec![ov[0], ov[1], ov[2], 1.0];
             let os = i.clone();
-            // println!("{}", i);
             ret.set(vector, os.as_str())?;
         }
         for (i, v) in ret.values.clone() {

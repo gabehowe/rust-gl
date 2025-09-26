@@ -41,13 +41,15 @@ pub fn find_gl_error() -> Result<(), GLFunctionError> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GLFunctionError {
     pub message: String,
+    pub backtrace: std::backtrace::Backtrace
 }
 impl GLFunctionError {
-    #[must_use] pub const fn new(message: String) -> Self {
-        Self { message }
+    #[must_use] pub fn new(message: String) -> Self {
+        log::debug!("{}",std::backtrace::Backtrace::capture());
+        Self { message, backtrace: std::backtrace::Backtrace::capture() }
     }
 }
 impl Default for GLFunctionError {

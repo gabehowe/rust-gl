@@ -337,7 +337,7 @@ impl Renderable {
         manager: &mut ShaderManager,
     ) -> Result<Self, Box<dyn Error>> {
         let path_dir = Path::new(path).parent().ok_or("Invalid path")?;
-        let input = BufReader::new(File::open(path)?);
+        let input = BufReader::new(File::open(path).map_err(|e| format!("Couldn't open file {path}: {e}"))?);
         let obj = parse_obj(input).map_err(|_| "Couldn't parse obj!")?;
         // let parsed_obj: Obj<TexturedVertex> = Obj::new(obj).expect("Jimbo jones the fourth");
         let (vertices, indices) = FromRawVertex::<u32>::process(

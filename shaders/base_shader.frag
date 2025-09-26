@@ -1,6 +1,5 @@
 #version 460 core
 //processed
-// STD140s
 layout (std140) uniform Matrices {
 	vec3 cameraPos;
 	mat4 view;
@@ -10,26 +9,47 @@ layout (std140, binding=1) uniform World {
 	vec4 ambient;
 };
 
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aNormal;
+in VS_OUT {
+	vec3 Normal;
+	vec3 FragPos;
+	float Time;
 #ifdef TEXTURES
-layout (location = 2) in vec2 aTexCoord;
+	vec2 TexCoord;
+#endif
+} fs_in;
+
+out vec4 FragColor;
+#ifdef DIFFUSE_TEXTURE
+uniform sampler2D diffuse;
+#else
+uniform vec4 diffuse;
+#endif
+
+#ifdef EMISSIVE_TEXTURE
+uniform sampler2D emissive;
+#else
+uniform vec4 emissive;
+#endif
+
+float specular_exponent = 256.0;
+
+#ifdef SPECULAR_TEXTURE
+uniform sampler2D specular;
+#else
+uniform float specular;
 #endif
 
 
 
-
-out vec4 FragColor;
-
-
-uniform mat4 model;
-
-//T: TEXTURES
-
 void main() {
-    //T: LOGIC
-#ifdef TEXTURES
-	vs_out.TexCoord = aTexCoord;
+#ifdef DIFFUSE_TEXTURE
+	vec4 diffuse = texture(diffuse, fs_in.TexCoord);
+#endif
+#ifdef EMISSIVE_TEXTURE
+	vec4 emissive = texture(emissive, fs_in.TexCoord);
+#endif
+#ifdef SPECULAR_TEXTURE
+	float specular = texture(specular, fs_in.TexCoord);
 #endif
     vec3 lightPos = vec3(-10.0f, 15.0f, 1.0f);
     vec3 lightDir = normalize(lightPos - fs_in.FragPos);

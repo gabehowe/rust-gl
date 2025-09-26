@@ -420,6 +420,7 @@ impl Engine {
     /// # Errors
     /// Returns an error if GLFW initialization fails or if the shader cannot be created.
     pub fn new(imgui: bool, window_name: &str) -> Result<Self, Box<dyn Error>> {
+        env_logger::init();
         let (glfw, mut window, events) = init_gflw(window_name);
         let camera = Self::init_gl();
         let event_handler = if imgui {
