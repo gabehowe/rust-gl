@@ -6,6 +6,5 @@ target
 start
 
 # big unused objects
-objects/chapel.obj
 objects/chapel scan.glb
 objects/chapel scan decimated.glb
