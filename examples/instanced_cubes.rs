@@ -20,8 +20,8 @@ fn main() {
     let vertices_per_unit = 0.1;
     let converted_size: f32 = size / vertices_per_unit;
     println!("{:?}", converted_size.round() as u32);
-    let input = BufReader::new(File::open("objects/cube.obj").expect("Jimbo jones again!"));
-    let obj = parse_obj(input).expect("Jimb jones the third");
+    let input = BufReader::new(File::open("objects/cube.obj").expect("Couldn't open get obj."));
+    let obj = parse_obj(input).expect("Couldn't parse obj.");
     // let parsed_obj: Obj<TexturedVertex> = Obj::new(obj).expect("Jimbo jones the fourth");
     let (vertices, indices): (Vec<TexturedVertex>, Vec<u32>) = FromRawVertex::<u32>::process(
         obj.positions,
