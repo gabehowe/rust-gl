@@ -5,10 +5,9 @@ Render the vector objects
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features, unused)]
 
+use crate::gl;
 use crate::renderable::{InstancedObject, MeshData, Render};
-use crate::shader::{
-    Shader, ShaderPtr,
-};
+use crate::shader::{Shader, ShaderPtr};
 use crate::transformation::{Transform, Transformable};
 use crate::{derive_transformable, Engine, RenderablePtr};
 use alloc::rc::Rc;
@@ -27,7 +26,8 @@ pub struct Object2d {
 }
 
 impl Object2d {
-    #[must_use] pub const fn new(color: [f32; 4], transform: Transform) -> Self {
+    #[must_use]
+    pub const fn new(color: [f32; 4], transform: Transform) -> Self {
         Self { color, transform }
     }
 }
@@ -37,7 +37,7 @@ const VERTS: [Vector3<f32>; 4] = [
     vec3(0.0, 0.0, 0.0),
     vec3(1.0, 0.0, 0.0),
     vec3(0.0, 1.0, 0.0),
-    vec3(1.0, 1.0, 0.0)
+    vec3(1.0, 1.0, 0.0),
 ];
 pub struct Draw {
     rectangles: Vec<Object2d>,
@@ -57,19 +57,14 @@ impl Draw {
     pub fn new(width: usize, height: usize, engine: &mut Engine) -> Self {
         // Create primitives for each of the shapes we want to draw.
         let shader = engine.data.shader_manager.register(
-            Shader::from_source(
+            Shader::from_glsl_source(
                 include_str!("../shaders/drawing_shader.vert"),
                 include_str!("../shaders/drawing_shader.frag"),
                 "",
             )
-                .unwrap(),
+            .unwrap(),
         );
-        let mut rectangle = MeshData::new(
-            VERTS.to_vec(),
-            vec![0, 1, 3, 2],
-            None,
-            None,
-        );
+        let mut rectangle = MeshData::new(VERTS.to_vec(), vec![0, 1, 3, 2], None, None);
         let mut points: Vec<Vector3<f32>> = Vec::new();
         for i in 1..CIRCLE_RESOLUTION {
             let angle = f32::consts::TAU * (i as f32) / (CIRCLE_RESOLUTION as f32);
@@ -98,8 +93,11 @@ impl Draw {
             None, // Default normals
             &shader,
             vec![],
-            vec![]);
-        let refr = Rc::from(RefCell::from(Box::from(rectangle_instanced) as Box<dyn Render>));
+            vec![],
+        );
+        let refr = Rc::from(RefCell::from(
+            Box::from(rectangle_instanced) as Box<dyn Render>
+        ));
         engine.data.add_renderable_rc(&refr);
         Self {
             rectangles: vec![],
@@ -123,11 +121,7 @@ impl Draw {
     }
     #[allow(clippy::cast_precision_loss)]
     pub fn fill(&mut self, color: [f32; 4]) {
-        self.rectangle(
-            Vector2::new(0.0, 0.0),
-            self.size.map(|it| it as f32),
-            color,
-        );
+        self.rectangle(Vector2::new(0.0, 0.0), self.size.map(|it| it as f32), color);
     }
     pub fn line(&mut self, p1: Vector2<f32>, p2: Vector2<f32>, width: f32, color: [f32; 4]) {
         let lpoint = p2;
@@ -142,7 +136,11 @@ impl Draw {
         line.scale(length, scaled_width, 1.0);
         line.rotate(0.0, angle, 0.0);
         line.translate(rpoint.x - lpoint.x, rpoint.y - lpoint.y, 0.0);
-        line.translate(perp_angle.cos() * -scaled_width/2.0, perp_angle.sin() * -scaled_width/2.0, 0.0);
+        line.translate(
+            perp_angle.cos() * -scaled_width / 2.0,
+            perp_angle.sin() * -scaled_width / 2.0,
+            0.0,
+        );
         self.add_object(line, "rectangle");
     }
     pub fn circle(&mut self, center: Vector2<f32>, radius: f32, color: [f32; 4]) {

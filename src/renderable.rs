@@ -4,8 +4,9 @@ use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManag
 use crate::transformation::{Transform, Transformable};
 use crate::util::find_gl_error;
 use cgmath::{Vector2, Vector3};
-use gl::types::{GLenum, GLuint};
-use gl::{ARRAY_BUFFER, FLOAT, STATIC_DRAW, TRIANGLES, TRIANGLE_FAN, UNSIGNED_INT};
+use crate::gl::types::{GLenum, GLuint};
+use crate::gl::{ARRAY_BUFFER, FLOAT, STATIC_DRAW, TRIANGLES, TRIANGLE_FAN, UNSIGNED_INT};
+use crate::gl;
 use itertools::Itertools;
 use obj::raw::{parse_mtl, parse_obj};
 use obj::{FromRawVertex, TexturedVertex};
@@ -219,7 +220,8 @@ pub struct MeshData {
     pub normals: Option<Vec<Vector3<f32>>>,
 }
 impl MeshData {
-    #[must_use] pub fn new(
+    #[must_use]
+    pub fn new(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
         normals: Option<Vec<Vector3<f32>>>,
@@ -337,7 +339,9 @@ impl Renderable {
         manager: &mut ShaderManager,
     ) -> Result<Self, Box<dyn Error>> {
         let path_dir = Path::new(path).parent().ok_or("Invalid path")?;
-        let input = BufReader::new(File::open(path).map_err(|e| format!("Couldn't open file {path}: {e}"))?);
+        let input = BufReader::new(
+            File::open(path).map_err(|e| format!("Couldn't open file {path}: {e}"))?,
+        );
         let obj = parse_obj(input).map_err(|_| "Couldn't parse obj!")?;
         // let parsed_obj: Obj<TexturedVertex> = Obj::new(obj).expect("Jimbo jones the fourth");
         let (vertices, indices) = FromRawVertex::<u32>::process(
@@ -349,19 +353,21 @@ impl Renderable {
         .map_err(|_| "Couldn't process vertices")?;
         let path_str = path_dir.to_str().ok_or("Invalid path")?;
         let raw_mtl = parse_mtl(BufReader::new(
-            File::open((path_str.to_owned()) + "/" + &obj.material_libraries[0])
-                .map_err(|_| {
-                    format!(
-                        "Cannot find file {}",
-                        path_str.to_owned()
-                            + "/"
-                            + &obj.material_libraries[0]
-                    )
-                })?,
+            File::open((path_str.to_owned()) + "/" + &obj.material_libraries[0]).map_err(|_| {
+                format!(
+                    "Cannot find file {}",
+                    path_str.to_owned() + "/" + &obj.material_libraries[0]
+                )
+            })?,
         ))
         .map_err(|_| "Couldn't parse mtl!")?;
-        let mat =
-            NarrowingMaterial::from_obj_mtl(&raw_mtl.materials.get("Material.001").ok_or("Couldn't get material")?.clone());
+        let mat = NarrowingMaterial::from_obj_mtl(
+            &raw_mtl
+                .materials
+                .get("Material.001")
+                .ok_or("Couldn't get material")?
+                .clone(),
+        );
         let new_shader = mat.with_path(shaderpath)?;
 
         // let new_shader = Shader::load_from_path("shaders/comp_base_shader");
@@ -435,14 +441,17 @@ impl RenderableGroup {
         shaderpath: &str,
         shader_manager: &mut ShaderManager,
     ) -> Result<Self, Box<dyn Error>> {
-        let mut ancestors = Path::new(path).ancestors();
+        let path = Path::new(path);
+        path.try_exists()?;
+        let mut ancestors = path.ancestors();
         let mut base = "";
         ancestors.next();
         if let Some(root) = ancestors.next() {
+            root.try_exists().map_err(|_| "File doesn't exists.")?;
             base = root.to_str().ok_or("Should be a string.")?;
         }
-
-        let (document, buffers, images) = gltf::import(path)?;
+        dbg!(path);
+        let (document, buffers, images) = gltf::import(path).map_err(|_| format!("Couldn't find document {path:?}"))?;
 
         let mut renderables: Vec<Renderable> = Vec::new();
         let mut materials: Vec<ShaderPtr> = Vec::new();
@@ -453,18 +462,29 @@ impl RenderableGroup {
         for mesh in document.meshes() {
             for primitive in mesh.primitives() {
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-                let vertices: Vec<Vector3<c_float>> =
-                    reader.read_positions().ok_or("Couldn't read positions")?.map_into().collect();
-                let indices: Vec<c_uint> = reader.read_indices().ok_or("Couldn't read indices")?.into_u32().collect();
+                let vertices: Vec<Vector3<c_float>> = reader
+                    .read_positions()
+                    .ok_or("Couldn't read positions")?
+                    .map_into()
+                    .collect();
+                let indices: Vec<c_uint> = reader
+                    .read_indices()
+                    .ok_or("Couldn't read indices")?
+                    .into_u32()
+                    .collect();
                 let tex_coords: Vec<Vector2<c_float>> = reader
                     .read_tex_coords(0)
                     .ok_or("Couldn't read texture coordinates")?
                     .into_f32()
                     .map_into()
                     .collect(); //TODO: add multiple sets
-                let normals: Vec<Vector3<c_float>> =
-                    reader.read_normals().ok_or("Couldn't read normals")?.map_into().collect();
-                let material = materials[primitive.material().index().ok_or("couldn't read index")?].clone();
+                let normals: Vec<Vector3<c_float>> = reader
+                    .read_normals()
+                    .ok_or("Couldn't read normals")?
+                    .map_into()
+                    .collect();
+                let material =
+                    materials[primitive.material().index().ok_or("couldn't read index")?].clone();
 
                 renderables.push(Renderable::new_with_tex(
                     vertices, indices, normals, tex_coords, &material,
@@ -477,7 +497,8 @@ impl RenderableGroup {
         })
     }
     #[allow(clippy::cast_precision_loss)]
-    #[must_use] pub fn create_grid(
+    #[must_use]
+    pub fn create_grid(
         width: u32,
         length: u32,
         scale: f32,

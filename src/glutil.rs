@@ -1,10 +1,11 @@
-use std::string::String;
 use crate::util::{find_gl_error, GLFunctionError};
-use gl::types::{GLbyte, GLdouble, GLenum, GLfloat, GLint, GLshort, GLubyte, GLuint, GLushort};
-use gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER};
+use crate::gl::types::{GLbyte, GLdouble, GLenum, GLfloat, GLint, GLshort, GLubyte, GLuint, GLushort};
+use crate::gl::{ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER};
+use crate::gl;
 use std::collections::HashMap;
 use std::error::Error;
 use std::ops::AddAssign;
+use std::string::String;
 
 pub trait GLObject {
     /// # Errors
@@ -39,7 +40,6 @@ impl Vaa {
             vbo_index,
         }
     }
-
 }
 pub struct VertexArrayObject {
     pub(crate) id: u32,
@@ -97,7 +97,11 @@ impl VertexArrayObject {
     }
     /// # Errors
     /// If the OpenGL function fails, it will return a `GLFunctionError`.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
     pub(crate) fn configure(&mut self, structure: Vec<Vaa>) -> Result<(), String> {
         self.structure = structure;
         // Enforce state
@@ -108,12 +112,21 @@ impl VertexArrayObject {
         let mut stride: HashMap<u32, u32> = HashMap::new();
         for i in &self.structure {
             stride.entry(i.vbo_index).or_insert(0);
-            stride.get_mut(&i.vbo_index).ok_or("Couldn't get vbo")?.add_assign(i.mem_size as u32);
+            stride
+                .get_mut(&i.vbo_index)
+                .ok_or("Couldn't get vbo")?
+                .add_assign(i.mem_size as u32);
         }
         let mut pointer_offset: HashMap<u32, u32> = HashMap::new();
         unsafe {
             for i in 0..self.vbos.len() {
-                gl::VertexArrayVertexBuffer(self.id, i as u32, self.vbos[i].id, 0, stride[&(i as u32)] as i32);
+                gl::VertexArrayVertexBuffer(
+                    self.id,
+                    i as u32,
+                    self.vbos[i].id,
+                    0,
+                    stride[&(i as u32)] as i32,
+                );
                 pointer_offset.insert(i as u32, 0);
             }
         }
@@ -137,7 +150,7 @@ impl VertexArrayObject {
         }
         find_gl_error().map_err(|x| x.message)
     }
-    
+
     /// # Errors
     /// If the type is not supported, it will return an error.
     fn get_type_size(type_enum: GLenum) -> Result<usize, String> {
@@ -199,7 +212,6 @@ impl GLObject for BufferObject {
     }
 }
 impl GLBuffer for BufferObject {
-
     #[allow(clippy::cast_possible_wrap)]
     fn buffer_data<T: Sized>(&mut self, data: &[T], usage: GLenum) -> Result<(), GLFunctionError> {
         self.buffered = true;

@@ -12,13 +12,14 @@ use rust_gl::{Data, Engine};
 
 fn main() {
     let mat = perspective(Deg(100.0), 16. / 9., 0.01, 1000.0);
-
-    println!("{:?}", mat);
+ 
+    println!("{mat:?}");
     let mut engine = Engine::new(true, "main window").expect("Failed to create engine");
     engine.set_cursor_mode(CursorMode::Normal);
+    
     let size = 20.;
 
-    let vertices_per_unit = 0.1;
+    let vertices_per_unit = 0.1; 
     let converted_size: f32 = size / vertices_per_unit;
     println!("{:?}", converted_size.round() as u32);
     let grid_verts = RenderableGroup::create_grid(

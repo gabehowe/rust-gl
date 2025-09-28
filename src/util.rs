@@ -1,3 +1,4 @@
+use crate::gl;
 use std::backtrace::Backtrace;
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -20,7 +21,8 @@ pub extern "system" fn debug_log(
     }
 }
 
-#[must_use] pub fn load_file(path: String) -> CString {
+#[must_use]
+pub fn load_file(path: String) -> CString {
     let mut file =
         File::open(path.as_str()).unwrap_or_else(|_| panic!("Failed to open file {path}!"));
     let mut contents = String::new();
@@ -44,12 +46,16 @@ pub fn find_gl_error() -> Result<(), GLFunctionError> {
 #[derive(Debug)]
 pub struct GLFunctionError {
     pub message: String,
-    pub backtrace: std::backtrace::Backtrace
+    pub backtrace: std::backtrace::Backtrace,
 }
 impl GLFunctionError {
-    #[must_use] pub fn new(message: String) -> Self {
-        log::debug!("{}",std::backtrace::Backtrace::capture());
-        Self { message, backtrace: std::backtrace::Backtrace::capture() }
+    #[must_use]
+    pub fn new(message: String) -> Self {
+        log::debug!("{}", std::backtrace::Backtrace::capture());
+        Self {
+            message,
+            backtrace: std::backtrace::Backtrace::capture(),
+        }
     }
 }
 impl Default for GLFunctionError {

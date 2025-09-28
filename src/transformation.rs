@@ -3,7 +3,11 @@ use std::mem::size_of;
 use std::ptr::null;
 
 use crate::util::{find_gl_error, GLFunctionError};
-use cgmath::{perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, Point3, Rad, Vector2, Vector3, Zero};
+use cgmath::{
+    perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, Point3, Rad, Vector2, Vector3,
+    Zero,
+};
+use crate::gl;
 use gl::types::{GLsizeiptr, GLuint};
 use gl::{STATIC_DRAW, UNIFORM_BUFFER};
 use imgui::sys::cty::c_double;
@@ -36,7 +40,6 @@ macro_rules! derive_transformable {
             fn set_uniform_scale(&mut self, scale: f32) {
                 self.transform.set_uniform_scale(scale);
             }
-
         }
     };
 }
@@ -49,7 +52,8 @@ pub struct Transform {
 }
 
 impl Transform {
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             position: Vector3::zero(),
             rotation: Vector3::zero(),
@@ -57,7 +61,8 @@ impl Transform {
         }
     }
 
-    #[must_use] pub fn with_position(position: Vector3<f32>) -> Self {
+    #[must_use]
+    pub fn with_position(position: Vector3<f32>) -> Self {
         Self {
             position,
             rotation: Vector3::zero(),
@@ -65,7 +70,8 @@ impl Transform {
         }
     }
 
-    #[must_use] pub fn with_scale(scale: Vector3<f32>) -> Self {
+    #[must_use]
+    pub fn with_scale(scale: Vector3<f32>) -> Self {
         Self {
             position: Vector3::zero(),
             rotation: Vector3::zero(),
@@ -73,14 +79,15 @@ impl Transform {
         }
     }
 
-    #[must_use] pub fn mat(&self) -> Matrix4<f32> {
-        let translation =Matrix4::from_translation(self.position);
+    #[must_use]
+    pub fn mat(&self) -> Matrix4<f32> {
+        let translation = Matrix4::from_translation(self.position);
         let scale = Matrix4::from_nonuniform_scale(self.scale.x, self.scale.y, self.scale.z);
         let rotation = Matrix4::from(Euler::new(
-                Rad(self.rotation.x),
-                Rad(self.rotation.z),
-                Rad(self.rotation.y),
-            ));
+            Rad(self.rotation.x),
+            Rad(self.rotation.z),
+            Rad(self.rotation.y),
+        ));
         translation * rotation * scale
     }
 }
@@ -183,7 +190,8 @@ impl Default for Camera {
 }
 
 impl Camera {
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             pos: Vector3::new(0f32, 0f32, 0f32),
             rot: Vector2::new(0.0, 0.00),

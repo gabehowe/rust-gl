@@ -4,3 +4,6 @@
 [submodule "lib/rust-imgui-opengl-renderer"]
 	path = lib/rust-imgui-opengl-renderer
 	url = git@github.com:gabehowe/rust-imgui-opengl-renderer.git
+[submodule "lib/rust-gpu"]
+	path = lib/rust-gpu
+	url = https://github.com/Rust-GPU/rust-gpu

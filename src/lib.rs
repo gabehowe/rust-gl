@@ -8,11 +8,18 @@
     clippy::pedantic,
     clippy::nursery,
     clippy::cargo,
+)] 
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
 )]
-#![allow(clippy::missing_errors_doc, clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-#![feature(const_vec_string_slice)]
 extern crate alloc;
-extern crate gl;
+mod gl {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
 
 use alloc::rc::Rc;
 // Public re-exports
@@ -27,7 +34,7 @@ use core::ptr;
 
 // Graphics and rendering imports
 use cgmath::{InnerSpace, Vector3};
-use gl::{
+use crate::gl::{
     COLOR_BUFFER_BIT, DEBUG_OUTPUT, DEBUG_OUTPUT_SYNCHRONOUS, DEBUG_SEVERITY_NOTIFICATION,
     DEBUG_SOURCE_API, DEBUG_TYPE_ERROR, DEPTH_BUFFER_BIT, DEPTH_TEST, FILL, FRONT_AND_BACK,
 };
@@ -59,7 +66,11 @@ use util::debug_log;
 //
 
 pub const HEIGHT: usize = 1000;
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 pub const WIDTH: usize = (HEIGHT as f32 * (16.0 / 9.0)) as usize;
 /// Camera movement speed multiplier
 const MOVESPEED: f32 = 2.5;
@@ -120,7 +131,11 @@ impl Data {
     /// If wireframe is true, uses the wireframe shader instead of the object's shader.
     /// # Errors
     /// Returns an error if any renderable fails to render.
-    fn render(&mut self, wireframe: bool, clear_color: (f32, f32, f32, f32)) -> Result<(), Box<dyn Error>> {
+    fn render(
+        &mut self,
+        wireframe: bool,
+        clear_color: (f32, f32, f32, f32),
+    ) -> Result<(), Box<dyn Error>> {
         // Safety: We know that the key is a valid key because we are using the glfw::Key enum.
         unsafe {
             if self.should_clear {
@@ -293,11 +308,59 @@ pub struct Engine {
     pub frame_index: u32,
     /// Current window size [width, height]
     pub size: [usize; 2],
-    pub clear_color: (f32, f32,f32,f32)
+    pub clear_color: (f32, f32, f32, f32),
 }
 
 /// Implementation of the Engine structure
 impl Engine {
+    /// Creates a new Engine instance
+    ///
+    /// Initializes GLFW, OpenGL, and creates a window with the given name.
+    /// If imgui is true, initializes the `ImGui` UI system.
+    /// # Errors
+    /// Returns an error if GLFW initialization fails or if the shader cannot be created.
+    pub fn new(imgui: bool, window_name: &str) -> Result<Self, Box<dyn Error>> {
+        env_logger::init();
+        let (glfw, mut window, events) = init_gflw(window_name);
+        let camera = Self::init_gl();
+        let event_handler = if imgui {
+            EventHandler::new(&mut window, events)
+        } else {
+            EventHandler::raw(events)
+        };
+        let mut shader_manager = ShaderManager::new();
+        let mat = NarrowingMaterial {
+            diffuse: Some(MaybeColorTexture::RGBA([0.0, 1.0, 0.0, 1.0])),
+            emissive: None,
+            specular: None,
+            metallic: None,
+            roughness: None,
+            ambient_scaling: None,
+            normal: None,
+        };
+        let wireframe_id = shader_manager.register(mat.into_shader(
+            include_str!("../shaders/base_shader.vert").to_string(),
+            include_str!("../shaders/base_shader.frag").to_string(),
+        )?);
+        Self::check_features();
+        Ok(Self {
+            glfw,
+            window,
+            frametime: 0.0,
+            data: Data {
+                renderables: Vec::new(),
+                camera,
+                shader_manager,
+                wireframe_shader: wireframe_id,
+                frame_buffer_texture: None,
+                should_clear: true,
+            },
+            event_handler,
+            frame_index: 0,
+            size: [WIDTH, HEIGHT],
+            clear_color: CLEARCOLOR,
+        })
+    }
     /// Adds a renderable object to the scene
     ///
     /// Convenience method that delegates to `Data::add_renderable`
@@ -314,7 +377,7 @@ impl Engine {
     ///
     /// Convenience method that delegates to `Data::add_renderable_rc`
     pub fn add_renderable_rc(&mut self, renderable: &RenderablePtr) {
-        self.data.add_renderable_rc(renderable)
+        self.data.add_renderable_rc(renderable);
     }
 
     /// Captures the current frame and saves it to a file
@@ -413,53 +476,6 @@ impl Engine {
     pub fn get_cursor_pos(&self) -> (f64, f64) {
         self.window.get_cursor_pos()
     }
-    /// Creates a new Engine instance
-    ///
-    /// Initializes GLFW, OpenGL, and creates a window with the given name.
-    /// If imgui is true, initializes the `ImGui` UI system.
-    /// # Errors
-    /// Returns an error if GLFW initialization fails or if the shader cannot be created.
-    pub fn new(imgui: bool, window_name: &str) -> Result<Self, Box<dyn Error>> {
-        env_logger::init();
-        let (glfw, mut window, events) = init_gflw(window_name);
-        let camera = Self::init_gl();
-        let event_handler = if imgui {
-            EventHandler::new(&mut window, events)
-        } else {
-            EventHandler::raw(events)
-        };
-        let mut shader_manager = ShaderManager::new();
-        let mat = NarrowingMaterial {
-            diffuse: Some(MaybeColorTexture::RGBA([0.0, 1.0, 0.0, 1.0])),
-            emissive: None,
-            specular: None,
-            metallic: None,
-            roughness: None,
-            ambient_scaling: None,
-            normal: None,
-        };
-        let wireframe_id = shader_manager.register(mat.into_shader(
-            include_str!("../shaders/base_shader.vert").to_string(),
-            include_str!("../shaders/base_shader.frag").to_string(),
-        )?);
-        Ok(Self {
-            glfw,
-            window,
-            frametime: 0.0,
-            data: Data {
-                renderables: Vec::new(),
-                camera,
-                shader_manager,
-                wireframe_shader: wireframe_id,
-                frame_buffer_texture: None,
-                should_clear: true,
-            },
-            event_handler,
-            frame_index: 0,
-            size: [WIDTH, HEIGHT],
-            clear_color: CLEARCOLOR
-        })
-    }
 
     /// Initializes OpenGL settings and creates a camera
     ///
@@ -478,6 +494,20 @@ impl Engine {
         camera
     }
 
+    /// Checks if all the features said to be enabled are supported.
+    /// # Panics
+    /// If any features are not supported.
+    fn check_features() {
+        if cfg!(feature = "spirv") {
+            unsafe {
+                let mut num_formats = 0;
+                gl::GetIntegerv(gl::NUM_SHADER_BINARY_FORMATS, &raw mut num_formats);
+                let mut formats: Vec<i32> = vec![0i32; num_formats as usize];
+                gl::GetIntegerv(gl::SHADER_BINARY_FORMATS, formats.as_mut_ptr());
+                assert!(formats.contains(&(gl::SHADER_BINARY_FORMAT_SPIR_V as i32)), "SHADER_BINARY_FORMAT_SPIR_V is unsupported. To fix this, disable feature \"spirv\".");
+            }
+        }
+    }
 
     /// Processes all pending GLFW events
     ///
@@ -485,7 +515,11 @@ impl Engine {
     /// Updates the engine state based on these events.
     /// # Panics
     /// If the `ImGui` context is not initialized when it's enabled.
-    #[allow(clippy::cast_sign_loss, clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation
+    )]
     fn process_glfw_events(&mut self) {
         self.glfw.poll_events();
         for (_, event) in glfw::flush_messages(&self.event_handler.events) {

@@ -1,0 +1,13 @@
+[build]
+target="/home/gabri/dev/rust-gl/lib/rust-gpu/crates/rustc_codegen_spirv-target-specs/target-specs/spirv-unknown-opengl4.5.json"
+rustflags = [
+    "-Zcodegen-backend=/home/gabri/dev/rust-gl/lib/rust-gpu/target/release/librustc_codegen_spirv.so",
+    "-Zbinary-dep-depinfo",
+    "-Csymbol-mangling-version=v0",
+    "-Zcrate-attr=feature(register_tool)",
+    "-Zcrate-attr=register_tool(rust_gpu)"
+]
+
+[unstable]
+build-std=["core"]
+build-std-features=["compiler-builtins-mem"]

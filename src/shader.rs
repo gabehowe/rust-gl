@@ -1,9 +1,10 @@
 use crate::util::{find_gl_error, load_file, GLFunctionError};
+use crate::gl;
 use alloc::rc::Rc;
 use cgmath::{Array, Matrix, Matrix2, Matrix3, Matrix4, Vector3, Vector4};
 use core::slice::Iter;
-use gl::types::{GLenum, GLint, GLsizei, GLuint};
-use gl::{
+use crate::gl::types::{GLenum, GLint, GLsizei, GLuint};
+use crate::gl::{
     FALSE, FRAGMENT_SHADER, STATIC_DRAW, TEXTURE_2D, TEXTURE_WRAP_S, TEXTURE_WRAP_T,
     UNIFORM_BUFFER, VERTEX_SHADER,
 };
@@ -39,19 +40,6 @@ pub type ShaderPtr = Rc<RefCell<Shader>>;
 fn new_shader_ptr(shader: Shader) -> ShaderPtr {
     Rc::new(RefCell::new(shader))
 }
-
-#[derive(Debug)]
-enum CacheType {
-    Matrix4(Matrix4<f32>),
-    Matrix3(Matrix3<f32>),
-    Matrix2(Matrix2<f32>),
-    Float(f32),
-    Int(i32),
-    UInt(u32),
-    VecInt(Vec<i32>),
-    VecUInt(Vec<u32>),
-    VecFloat(Vec<f32>),
-}
 #[allow(clippy::ref_option)]
 fn from_color(color: &Option<MtlColor>) -> Vec<f32> {
     if let &Some(MtlColor::Rgb(r, g, b)) = color {
@@ -69,7 +57,6 @@ impl Default for ShaderManager {
         Self::new()
     }
 }
-
 impl ShaderManager {
     /// # Panics
     /// If a usize cannot be converted to an isize.
@@ -97,7 +84,7 @@ impl ShaderManager {
     }
     /// # Errors
     /// If the OpenGL function fails, it will return a `GLFunctionError`.
-    /// If the shader cannot be borrowed mutably, it will return a `Box<dyn Error>`.
+    /// If the shader cannot be borrowed mutagly, it will return a `Box<dyn Error>`.
     #[allow(clippy::cast_possible_wrap)]
     pub fn update(&mut self) -> Result<(), Box<dyn Error>> {
         let ambient: Vector4<f32> = Vector4::new(0.0, 0.0, 0.0, 1.0);
@@ -110,9 +97,6 @@ impl ShaderManager {
                 ambient.as_ptr().cast(),
             );
             gl::BindBuffer(UNIFORM_BUFFER, 0);
-        }
-        for shader_ptr in self.iter() {
-            shader_ptr.try_borrow_mut()?.try_runtime_recompile();
         }
         Ok(())
     }
@@ -128,7 +112,9 @@ impl ShaderManager {
     /// # Errors
     /// If the shader cannot be loaded from the path, it will return a `GLFunctionError`.
     pub fn load_from_path(&mut self, path: &str) -> Result<ShaderPtr, Box<dyn Error>> {
-        Ok(self.register(Shader::load_from_path(path).inspect_err(|_| debug!("Failed to open {path}."))?))
+        Ok(self.register(
+            Shader::load_from_path(path).inspect_err(|_| debug!("Failed to open {path}."))?,
+        ))
     }
     #[must_use]
     pub const fn count(&self) -> usize {
@@ -138,24 +124,52 @@ impl ShaderManager {
 // A struct to build shaders depending on the options provided in the material.
 #[derive(Default)]
 pub struct Shader {
-    path: Option<String>,
-    geo: u32,
     optionals: i32,
     pub textures: HashMap<String, u32>,
-    vector_values: HashMap<String, Vec<f32>>,
-    values: HashMap<String, f32>,
-    debug_sources: Vec<CString>,
     program: Option<u32>,
-    cache: HashMap<String, CacheType>,
 }
 
-impl Shader {
+
+impl Shader { 
     fn new() -> Self {
         Self::default()
     }
+
+    #[cfg(feature = "spirv")]
+    pub fn from_spirv_binary(binary_path: &str, spec_consts: Vec<(u32, u32)>) -> Result<Self, Box<dyn Error>> {
+        unsafe {
+        let program = gl::CreateProgram();
+        let path = Path::new(binary_path);
+        let bytes = std::fs::read(path)?;
+        Self::specialize_subshader(gl::FRAGMENT_SHADER, program, &bytes, "FRAGMENT", &spec_consts);
+        Self::specialize_subshader(gl::FRAGMENT_SHADER, program, &bytes, "VERTEX", &spec_consts);
+        Self::check_shader_compilation_err(program)?;
+        return Ok(Self {
+            optionals: 0,
+            textures: Default::default(),
+            program: Some(program)
+        });
+        }
+    }
+
+    #[cfg(feature = "spirv")] 
+    fn specialize_subshader(shader_type: GLenum, program: u32, spirv_bytes: &Vec<u8>, entry_point: &str, spec_consts: &Vec<(u32, u32)>) {
+        let mut shader = unsafe {gl::CreateShader(shader_type)};
+        let indices: Vec<u32> = spec_consts.iter().map(|it| it.0).collect();
+        let values: Vec<u32> = spec_consts.iter().map(|it| it.1).collect();
+        unsafe {
+            use std::ffi::c_void;
+
+            gl::ShaderBinary(1,&raw mut shader, 
+                gl::SHADER_BINARY_FORMAT_SPIR_V, spirv_bytes.as_ptr() as *const c_void, spirv_bytes.len() as i32);
+            gl::SpecializeShader(shader, entry_point.as_ptr() as *const i8,indices.len() as u32, indices.as_ptr(), values.as_ptr());
+            gl::AttachShader(program, shader);
+        }
+    }
+
     /// # Errors
     /// If the shader does not be compiled, it will return a `GLFunctionError`.
-    pub fn from_source(
+    pub fn from_glsl_source(
         vert_source: &str,
         frag_source: &str,
         geo_source: &str,
@@ -187,21 +201,18 @@ impl Shader {
             CString::default()
         };
         let mut ret = Self {
-            path: Some(path.to_owned()),
-            geo: 0,
             optionals: 0,
             textures: HashMap::new(),
-            vector_values: HashMap::from([
-                ("ambient".to_owned(), vec![0.; 3]),
-                ("diffuse".to_owned(), vec![0.; 3]),
-                ("specular".to_owned(), vec![0.; 3]),
-                ("emissive".to_owned(), vec![0.; 3]),
-            ]),
-            values: HashMap::new(),
-            debug_sources: vec![vert_source.clone(), frag_source.clone(), geo_source.clone()],
             program: None,
-            cache: HashMap::default(),
         };
+
+        // vector_values: HashMap::from([
+        //     ("ambient".to_owned(), vec![0.; 3]),
+        //     ("diffuse".to_owned(), vec![0.; 3]),
+        //     ("specular".to_owned(), vec![0.; 3]),
+        //     ("emissive".to_owned(), vec![0.; 3]),
+        // ]),
+        // values: HashMap::new(),
         ret.program = Some(ret.compile(vert_source, frag_source, geo_source)?);
         ret.check_optionals();
         Ok(ret)
@@ -220,7 +231,7 @@ impl Shader {
     }
     /// # Errors
     /// If the OpenGL function fails, it will return a `GLFunctionError`.
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss, clippy::cast_possigle_truncation)]
     fn compile_subshader(program: u32, source: CString, id: u32) -> Result<(), Box<dyn Error>> {
         unsafe {
             gl::ShaderSource(id, 1, &source.as_ptr(), null());
@@ -257,28 +268,39 @@ impl Shader {
     }
     /// # Errors
     /// If the program fails to compile.
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss, clippy::cast_possigle_truncation)]
     pub fn compile(
         &mut self,
         vert_source: CString,
         frag_source: CString,
         geo_source: CString,
     ) -> Result<u32, Box<dyn Error>> {
-        let vert_program = Self::create_shader(VERTEX_SHADER).inspect_err(|_| {debug!{"VERT"}})?;
-        let frag_program = Self::create_shader(FRAGMENT_SHADER).inspect_err(|_| {debug!{"FRAG"}})?;
+        let vert_program = Self::create_shader(VERTEX_SHADER).inspect_err(|_| {
+            debug! {"VERT"}
+        })?;
+        let frag_program = Self::create_shader(FRAGMENT_SHADER).inspect_err(|_| {
+            debug! {"FRAG"}
+        })?;
         let program = Self::create_program()?;
         if !geo_source.to_str()?.is_empty() {
-            self.geo = unsafe { gl::CreateShader(gl::GEOMETRY_SHADER) };
-            Self::compile_subshader(program, geo_source, self.geo)?;
+            let geo = unsafe { gl::CreateShader(gl::GEOMETRY_SHADER) };
+            Self::compile_subshader(program, geo_source, geo)?;
         }
 
-        Self::compile_subshader(program, vert_source, vert_program).inspect_err(|_| { debug!("VERT") })?;
-        Self::compile_subshader(program, frag_source, frag_program).inspect_err(|_| { debug!("FRAG") })?;
+        Self::compile_subshader(program, vert_source, vert_program)
+            .inspect_err(|_| debug!("VERT"))?;
+        Self::compile_subshader(program, frag_source, frag_program)
+            .inspect_err(|_| debug!("FRAG"))?;
 
         unsafe {
             gl::LinkProgram(program);
         }
 
+        Self::bind_matrices(program)?;
+        Self::check_shader_compilation_err(program)?;
+        Ok(program)
+    }
+    fn check_shader_compilation_err(program: u32) -> Result<(), GLFunctionError> {
         let mut success = 0;
         unsafe {
             gl::GetProgramiv(program, gl::LINK_STATUS, &mut success);
@@ -294,57 +316,11 @@ impl Shader {
             ))
             .into());
         }
-        Self::bind_matrices(program)?;
-        Ok(program)
+        Ok(())
     }
-
-    /*    unsafe fn get_shader_error(&mut self) -> String {
-            let mut v: Vec<u8> = Vec::with_capacity(1024);
-            let mut log_len = 0_i32;
-            gl::GetShaderInfoLog(self.frag, 1024, &mut log_len, v.as_mut_ptr().cast());
-            v.set_len(log_len.try_into().unwrap());
-            String::from_utf8(v).expect("Couldn't convert to string.")
-        }
-    */
     pub(crate) fn update(&mut self) -> Result<(), String> {
         self.update_optionals()?;
         Ok(())
-    }
-    #[allow(clippy::unused_result_ok, reason = "Should fail silently")]
-    pub fn try_runtime_recompile(&mut self) {
-        if let Some(path) = self.path.clone() {
-            let mut vert_string: String = path.clone();
-            vert_string.push_str(".vert");
-
-            let mut frag_string: String = path.clone();
-            frag_string.push_str(".frag");
-            let vert_source = load_file(vert_string);
-            let frag_source = load_file(frag_string);
-
-            let geo_string = format!("{path}.geo");
-            let geo_source = if Path::new(&geo_string).exists() {
-                load_file(geo_string)
-            } else {
-                CString::default()
-            };
-
-            if (vert_source != self.debug_sources[0]
-                || frag_source != self.debug_sources[1]
-                || geo_source != self.debug_sources[2])
-                && !vert_source
-                    .to_str()
-                    .unwrap_or_default()
-                    .contains("//proccessed")
-            {
-                let new_progid =
-                    self.compile(vert_source.clone(), frag_source.clone(), geo_source.clone());
-                if let Ok(new_progid) = new_progid {
-                    self.program = Some(new_progid);
-                    let _ = self.load_cached_uniforms();
-                }
-                self.debug_sources = vec![vert_source, frag_source, geo_source];
-            }
-        }
     }
 
     /// Must be called use_ because use is a reserved keyword.
@@ -376,10 +352,12 @@ impl Shader {
     /// # Safety
     /// This isn't doing anything crazy?
     unsafe fn setup_textures() {
-        gl::TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, gl::REPEAT as i32);
-        gl::TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, gl::REPEAT as i32);
-        gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-        gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        unsafe {
+            gl::TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, gl::REPEAT as i32);
+            gl::TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, gl::REPEAT as i32);
+            gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        }
         // gl::GenTextures(1, &mut self.texture);
         // gl::BindTexture(TEXTURE_2D, self.texture);
     }
@@ -479,43 +457,8 @@ impl Shader {
         }
     }
 
-    fn load_cached_uniforms(&self) -> Result<(), String> {
-        println!("{:?}", self.cache);
-        for (k, v) in &self.cache {
-            // TODO: Figure out this mess
-            match v {
-                CacheType::Matrix4(m) => {
-                    self.direct_set(*m, k)?;
-                }
-                CacheType::Matrix3(m) => {
-                    self.direct_set(*m, k)?;
-                }
-                CacheType::Matrix2(m) => {
-                    self.direct_set(*m, k)?;
-                }
-                CacheType::Float(f) => {
-                    self.direct_set(*f, k)?;
-                }
-                CacheType::Int(i) => {
-                    self.direct_set(*i, k)?;
-                }
-                CacheType::UInt(u) => {
-                    self.direct_set(*u, k)?;
-                }
-                CacheType::VecInt(v) => {
-                    self.direct_set(v.clone(), k)?;
-                }
-                CacheType::VecUInt(v) => {
-                    self.direct_set(v.clone(), k)?;
-                }
-                CacheType::VecFloat(v) => {
-                    self.direct_set(v.clone(), k)?;
-                }
-            }
-        }
-        Ok(())
-    }
 }
+
 pub enum MaybeColorTexture {
     Texture(DynamicImage),
     RGBA([f32; 4]),
@@ -537,44 +480,6 @@ pub struct NarrowingMaterial {
     pub normal: Option<MaybeTexture>,
 }
 
-macro_rules! cvt_vals_to_shader {
-    ($var:expr ,$name:expr, $default:expr, $ret:expr, Vec) => {
-        match $var {
-            None => {
-                $ret.vector_values.insert($name.to_owned(), $default);
-            }
-            Some(enum_val) => match enum_val {
-                MaybeColorTexture::Texture(v) => {
-                    $ret.textures
-                        .insert($name.to_owned(), Shader::create_image_texture(v));
-                }
-                MaybeColorTexture::RGBA(v) => {
-                    $ret.vector_values.insert($name.to_owned(), v.to_vec());
-                }
-                MaybeColorTexture::RGB(v) => {
-                    $ret.vector_values
-                        .insert($name.to_owned(), vec![v[0], v[1], v[2], 1.0]);
-                }
-            },
-        }
-    };
-    ($var:expr ,$name:expr, $default:expr, $ret:expr, Val) => {
-        match $var {
-            None => {
-                $ret.values.insert($name.to_owned(), $default);
-            }
-            Some(enum_val) => match enum_val {
-                MaybeTexture::Texture(v) => {
-                    $ret.textures
-                        .insert("specular".to_owned(), Shader::create_image_texture(v));
-                }
-                MaybeTexture::Value(v) => {
-                    $ret.values.insert("specular".to_owned(), v);
-                }
-            },
-        }
-    };
-}
 impl NarrowingMaterial {
     /// # Panics
     /// If the material cannot be created from the obj material.
@@ -702,9 +607,7 @@ impl NarrowingMaterial {
             CString::new(frag_source.clone())?,
             CString::new("")?,
         ];
-        let mut ret = self.into_shader(vert_source, frag_source)?;
-        ret.debug_sources.extend(debug_sources);
-        ret.path = Some(base_path.to_string());
+        let ret = self.into_shader(vert_source, frag_source)?;
         Ok(ret)
     }
     pub(crate) fn into_shader(
@@ -713,32 +616,74 @@ impl NarrowingMaterial {
         mut frag_source: String,
     ) -> Result<Shader, Box<dyn Error>> {
         let mut ret = Shader {
-            path: None,
-            geo: 0,
             optionals: 0,
             textures: HashMap::new(),
-            vector_values: HashMap::new(),
-            values: HashMap::default(),
-            debug_sources: vec![],
             program: None,
-            cache: HashMap::default(),
         };
+        let mut vector_values = HashMap::new();
+        let mut values = HashMap::new();
+
+        macro_rules! cvt_vals_to_shader {
+            ($var:expr ,$name:expr, $default:expr, $ret:expr, Vec) => {
+                match $var {
+                    None => {
+                        vector_values.insert($name.to_owned(), $default);
+                    }
+                    Some(enum_val) => match enum_val {
+                        MaybeColorTexture::Texture(v) => {
+                            $ret.textures
+                                .insert($name.to_owned(), Shader::create_image_texture(v));
+                        }
+                        MaybeColorTexture::RGBA(v) => {
+                            vector_values.insert($name.to_owned(), v.to_vec());
+                        }
+                        MaybeColorTexture::RGB(v) => {
+                            vector_values.insert($name.to_owned(), vec![v[0], v[1], v[2], 1.0]);
+                        }
+                    },
+                }
+            };
+            ($var:expr ,$name:expr, $default:expr, $ret:expr, Val) => {
+                match $var {
+                    None => {
+                        values.insert($name.to_owned(), $default);
+                    }
+                    Some(enum_val) => match enum_val {
+                        MaybeTexture::Texture(v) => {
+                            $ret.textures
+                                .insert("specular".to_owned(), Shader::create_image_texture(v));
+                        }
+                        MaybeTexture::Value(v) => {
+                            values.insert("specular".to_owned(), v);
+                        }
+                    },
+                }
+            };
+        }
         cvt_vals_to_shader!(self.diffuse, "diffuse", vec![0.5; 3], ret, Vec);
         cvt_vals_to_shader!(self.specular, "specular", 1.0, ret, Val);
         cvt_vals_to_shader!(self.emissive, "emissive", vec![0.0; 4], ret, Vec);
 
         if !ret.textures.is_empty() {
             let fmt_str = "#define TEXTURES 1\n";
-            vert_source.insert_str(vert_source.find('\n').unwrap()+1, fmt_str);
-            frag_source.insert_str(frag_source.find('\n').unwrap()+1, fmt_str);
+            vert_source.insert_str(vert_source.find('\n').unwrap() + 1, fmt_str);
+            frag_source.insert_str(frag_source.find('\n').unwrap() + 1, fmt_str);
         }
         for i in ret.textures.keys() {
             let fmt_str = format!("#define {}_TEXTURE 1\n", i.to_uppercase());
-            vert_source.insert_str(vert_source.find('\n').unwrap()+1, fmt_str.as_str());
-            frag_source.insert_str(frag_source.find('\n').unwrap()+1, fmt_str.as_str());
+            vert_source.insert_str(vert_source.find('\n').unwrap() + 1, fmt_str.as_str());
+            frag_source.insert_str(frag_source.find('\n').unwrap() + 1, fmt_str.as_str());
         }
-        let pretty_frag_source: String = frag_source.split('\n').enumerate().map(|(x, i)| {format!("\n\x1b[36m {x:01}\x1b[39m\x1b[49m: {i}")}).collect();
-        let pretty_vert_source: String = vert_source.split('\n').enumerate().map(|(x, i)| {format!("\n\x1b[36m {x:01}\x1b[39m\x1b[49m: {i}")}).collect();
+        let pretty_frag_source: String = frag_source
+            .split('\n')
+            .enumerate()
+            .map(|(x, i)| format!("\n\x1b[36m {x:01}\x1b[39m\x1b[49m: {i}"))
+            .collect();
+        let pretty_vert_source: String = vert_source
+            .split('\n')
+            .enumerate()
+            .map(|(x, i)| format!("\n\x1b[36m {x:01}\x1b[39m\x1b[49m: {i}"))
+            .collect();
         debug!("frag_source: {pretty_frag_source}");
         debug!("vert_source: {pretty_vert_source}");
         ret.program = Some(ret.compile(
@@ -747,13 +692,13 @@ impl NarrowingMaterial {
             CString::new("")?,
         )?);
         ret.use_();
-        for (i, v) in ret.vector_values.clone() {
+        for (i, v) in vector_values.clone() {
             let ov = v.clone();
             let vector = vec![ov[0], ov[1], ov[2], 1.0];
             let os = i.clone();
             ret.set(vector, os.as_str())?;
         }
-        for (i, v) in ret.values.clone() {
+        for (i, v) in values.clone() {
             let os = i.clone();
             ret.set(v, os.as_str())?;
         }
@@ -770,15 +715,8 @@ macro_rules! set_matrix_value {
              * Sets a value in the shader and caches it.
              */
             fn set(&mut self, value: $tt, name: &str) -> Result<(), String> {
-                if let Some($cache_type(cached)) = self.cache.get(name) {
-                    if *cached == value {
-                        return Ok(());
-                    }
-                }
                 // Insert into the cache if it successfully sets the value.
-                self.direct_set(value.clone(), name).map(|()| {
-                    self.cache.insert(name.to_owned(), $cache_type(value));
-                })
+                self.direct_set(value.clone(), name)
             }
             /**
              * Sets a value in the shader without caching it.
@@ -788,6 +726,7 @@ macro_rules! set_matrix_value {
                     self.use_();
                 }
                 let loc = self.get_uniform_location(name)?;
+                //
                 // Safety: trust it's safe
                 unsafe { $gl_call(loc, value.clone())? };
                 match find_gl_error() {
