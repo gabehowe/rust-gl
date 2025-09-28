@@ -1,11 +1,15 @@
 use cgmath::{vec3, Vector3, Zero};
 use glfw::CursorMode;
 use imgui::{Condition, Ui};
-use rust_gl::shader::SetValue;
+use rust_gl::shader::{FromVertex, SetValue};
 
 use rust_gl::renderable::Renderable;
 use rust_gl::transformation::Transformable;
 use rust_gl::{Data, Engine};
+use obj::raw::parse_obj;
+use obj::{FromRawVertex, TexturedVertex};
+use std::fs::File;
+use std::io::BufReader;
 
 
 fn main() {
@@ -39,6 +43,22 @@ fn main() {
     debug_axes.translate(0.0, 0.0, 0.0);
     engine.data.add_renderable(Box::from(debug_axes)).expect("Couldn't add renderable.");
 
+    let input = BufReader::new(File::open("objects/cube.obj").expect("Couldn't open get obj."));
+    let obj = parse_obj(input).expect("Couldn't parse obj.");
+    // let parsed_obj: Obj<TexturedVertex> = Obj::new(obj).expect("Jimbo jones the fourth");
+    let (vertices, indices): (Vec<TexturedVertex>, Vec<u32>) = FromRawVertex::<u32>::process(
+        obj.positions,
+        obj.normals.clone(),
+        obj.tex_coords.clone(),
+        obj.polygons,
+    )
+    .expect("couldn't process cube mesh");
+    let vtx: Vec<Vector3<f32>> = vertices.iter().map(Vector3::from_vertex).collect();
+    let shader = engine.data.shader_manager.load_from_path("shaders/pos_shader").expect("Couldn't load shader");
+    
+    let renderable = engine
+        .data
+        .add_renderable(Box::from(Renderable::new(vtx, indices, None, &shader)));
     let mut staggered_frametime = 0.0;
     let mut last_update = 0.0;
     while engine.should_keep_running() {
