@@ -7,11 +7,12 @@ layout (std140, set=0, binding=0) uniform Matrices {
     mat4 view;
     mat4 projection;
 };
+layout(set=0, binding=1) uniform Inputs {
+	mat4 model;
+	float time;
+};
 
-layout(set=0, binding=1) uniform mat4 model;
-layout(set=0,binding=2) uniform float time;
-
-out VS_OUT {
+layout (location = 0) out VS_OUT {
     vec3 Normal;
     vec3 FragPos;
 } vs_out;
@@ -19,6 +20,6 @@ out VS_OUT {
 void main()
 {
     vs_out.Normal = mat3(transpose(inverse(model))) * aNormal;
-    vs_out.Fraglos = vec3(model * vec4(aPos, 1.0));
+    vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
     gl_Position = projection * view * model * vec4(aPos.xyz, 1.0);
 }

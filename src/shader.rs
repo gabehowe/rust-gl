@@ -141,8 +141,9 @@ impl Shader {
         let program = gl::CreateProgram();
         let path = Path::new(binary_path);
         let bytes = std::fs::read(path)?;
-        Self::specialize_subshader(gl::FRAGMENT_SHADER, program, &bytes, "FRAGMENT", &spec_consts);
-        Self::specialize_subshader(gl::FRAGMENT_SHADER, program, &bytes, "VERTEX", &spec_consts);
+        Self::specialize_subshader(gl::FRAGMENT_SHADER, program, &bytes, "fragment", &spec_consts);
+        Self::specialize_subshader(gl::VERTEX_SHADER, program, &bytes, "vertex", &spec_consts);
+        gl::LinkProgram(program);
         Self::check_shader_compilation_err(program)?;
         return Ok(Self {
             optionals: 0,
@@ -159,16 +160,16 @@ impl Shader {
         let values: Vec<u32> = spec_consts.iter().map(|it| it.1).collect();
         unsafe {
             use std::ffi::c_void;
-
+            let c_ep = CString::new(entry_point).unwrap();
             gl::ShaderBinary(1,&raw mut shader, 
-                gl::SHADER_BINARY_FORMAT_SPIR_V, spirv_bytes.as_ptr() as *const c_void, spirv_bytes.len() as i32);
-            gl::SpecializeShader(shader, entry_point.as_ptr() as *const i8,indices.len() as u32, indices.as_ptr(), values.as_ptr());
+                gl::SHADER_BINARY_FORMAT_SPIR_V, spirv_bytes.as_slice().as_ptr() as *const c_void, spirv_bytes.len() as i32);
+            gl::SpecializeShader(shader, c_ep.as_ptr() as *const i8,indices.len() as u32, indices.as_ptr(), values.as_ptr());
             gl::AttachShader(program, shader);
         }
     }
 
     /// # Errors
-    /// If the shader does not be compiled, it will return a `GLFunctionError`.
+    /// If the shader does not compile, it will return a `GLFunctionError`.
     pub fn from_glsl_source(
         vert_source: &str,
         frag_source: &str,
