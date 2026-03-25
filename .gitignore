@@ -4,6 +4,8 @@ target
 /screenshots/
 .gproj
 start
+imgui.ini
+.direnv
 
 # big unused objects
 objects/chapel scan.glb
