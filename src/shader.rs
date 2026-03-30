@@ -380,8 +380,6 @@ impl Shader {
         gl::TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, gl::REPEAT as i32);
         gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
         gl::TexParameteri(TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-        // gl::GenTextures(1, &mut self.texture);
-        // gl::BindTexture(TEXTURE_2D, self.texture);
     }
     fn load_texture(path: &str) -> Result<u32, Box<dyn Error>> {
         let img = open(path)?;
@@ -391,7 +389,7 @@ impl Shader {
         let mut texture = 0;
         let img = data;
         let rgba = img.to_rgba8();
-        let raw = rgba;
+        let raw = rgba.into_raw();
         unsafe {
             gl::GenTextures(1, &mut texture);
             gl::BindTexture(TEXTURE_2D, texture);
@@ -515,66 +513,47 @@ impl Shader {
         }
         Ok(())
     }
+    fn insert_texture_or_color(&mut self, value: &Option<TextureOrColor>, name: &str, default: TextureOrColor) {
+            
+        if let Some(inner) = value {
+            match inner {
+                TextureOrColor::Value(v) => {self.vector_values.insert(name.to_owned(),v.to_vec());},
+                TextureOrColor::Texture(v) => {self.textures.insert(name.to_owned(),Shader::create_image_texture(v.clone())); },
+            }
+        }
+        else {
+            self.insert_texture_or_color(&Some(default), name, TextureOrColor::Value([0.0;4]));
+        }
+    }
+    fn insert_texture_or_scalar(&mut self, value: &Option<TextureOrScalar>, name: &str, default: TextureOrScalar) {
+        if let Some(inner) = value {
+            match inner {
+                TextureOrScalar::Value(v) => {self.values.insert(name.to_owned(),*v);},
+                TextureOrScalar::Texture(v) => {self.textures.insert(name.to_owned(),Shader::create_image_texture(v.clone())); },
+            }
+        }
+        else {
+            self.insert_texture_or_scalar(&Some(default), name, TextureOrScalar::Value(0.0));
+        }
+    }
 }
-pub enum MaybeColorTexture {
+pub enum TextureOr<T> {
     Texture(DynamicImage),
-    RGBA([f32; 4]),
-    RGB([f32; 3]),
+    Value(T)
 }
-
-pub enum MaybeTexture {
-    Texture(DynamicImage),
-    Value(f32),
-}
+pub type TextureOrColor = TextureOr<[f32; 4]>;
+pub type TextureOrScalar = TextureOr<f32>;
 
 pub struct NarrowingMaterial {
-    pub diffuse: Option<MaybeColorTexture>,
-    pub emissive: Option<MaybeColorTexture>,
-    pub specular: Option<MaybeTexture>,
-    pub metallic: Option<MaybeTexture>,
-    pub roughness: Option<MaybeTexture>,
-    pub ambient_scaling: Option<MaybeTexture>,
-    pub normal: Option<MaybeTexture>,
+    pub diffuse: Option<TextureOrColor>,
+    pub emissive: Option<TextureOrColor>,
+    pub specular: Option<TextureOrScalar>,
+    pub metallic: Option<TextureOrScalar>,
+    pub roughness: Option<TextureOrScalar>,
+    pub ambient_scaling: Option<TextureOrScalar>,
+    pub normal: Option<TextureOrScalar>,
 }
 
-macro_rules! cvt_vals_to_shader {
-    ($var:expr ,$name:expr, $default:expr, $ret:expr, Vec) => {
-        match $var {
-            None => {
-                $ret.vector_values.insert($name.to_owned(), $default);
-            }
-            Some(enum_val) => match enum_val {
-                MaybeColorTexture::Texture(v) => {
-                    $ret.textures
-                        .insert($name.to_owned(), Shader::create_image_texture(v));
-                }
-                MaybeColorTexture::RGBA(v) => {
-                    $ret.vector_values.insert($name.to_owned(), v.to_vec());
-                }
-                MaybeColorTexture::RGB(v) => {
-                    $ret.vector_values
-                        .insert($name.to_owned(), vec![v[0], v[1], v[2], 1.0]);
-                }
-            },
-        }
-    };
-    ($var:expr ,$name:expr, $default:expr, $ret:expr, Val) => {
-        match $var {
-            None => {
-                $ret.values.insert($name.to_owned(), $default);
-            }
-            Some(enum_val) => match enum_val {
-                MaybeTexture::Texture(v) => {
-                    $ret.textures
-                        .insert("specular".to_owned(), Shader::create_image_texture(v));
-                }
-                MaybeTexture::Value(v) => {
-                    $ret.values.insert("specular".to_owned(), v);
-                }
-            },
-        }
-    };
-}
 impl NarrowingMaterial {
     /// # Panics
     /// If the material cannot be created from the obj material.
@@ -591,19 +570,19 @@ impl NarrowingMaterial {
         if mtl.diffuse.is_some() {
             let diff = from_color(&mtl.diffuse);
             let new_diff = [diff[0], diff[1], diff[2], 1.0];
-            ret.diffuse = Some(MaybeColorTexture::RGBA(new_diff));
+            ret.diffuse = Some(TextureOrColor::Value(new_diff));
         }
         if mtl.emissive.is_some() {
             let emis = from_color(&mtl.emissive);
             let new_emis = [emis[0], emis[1], emis[2], 1.0];
-            ret.emissive = Some(MaybeColorTexture::RGBA(new_emis));
+            ret.emissive = Some(TextureOrColor::Value(new_emis));
         }
         if mtl.optical_density.is_some() {
             let specular = ((mtl.optical_density.unwrap() - 1.0)
                 / (mtl.optical_density.unwrap() + 1.0))
                 .powi(2)
                 / 0.08;
-            ret.specular = Some(MaybeTexture::Value(specular));
+            ret.specular = Some(TextureOrScalar::Value(specular));
         }
         ret
         // todo: provide waay better support for this.
@@ -613,33 +592,27 @@ impl NarrowingMaterial {
     #[allow(clippy::unnecessary_wraps)]
     pub(crate) fn from_gltf_mtl(
         material: &gltf::Material,
-        images: &[gltf::image::Data],
+        images: &[gltf::image::Data], // TODO(gabri): retrieve GLTF images
         buffers: &[gltf::buffer::Data],
         base_path: &str,
     ) -> Result<Self, Box<dyn Error>> {
         macro_rules! texture_or_factor {
-            ($property:expr, $texture_source:expr, $factor_source:expr, $texture_enum:path, $factor_enum:path) => {
+            ($texture_source:expr, $factor_source:expr) => {
+                {
                 if let Some(inner_texture) = $texture_source {
                     let source = inner_texture.texture().source().source();
                     match source {
-                        gltf::image::Source::Uri { uri, .. } => {
-                            $property = Some($texture_enum(
-                                open(base_path.to_owned() + "/" + uri)
-                                    .expect("Couldn't open image"),
-                            ));
-                        }
+                        gltf::image::Source::Uri { uri, .. } => TextureOr::Texture(open(base_path.to_owned() + "/" + uri).expect("Couldn't open image")),
                         gltf::image::Source::View { view, .. } => {
-                            let buf = view.buffer();
                             let start: usize = view.offset();
                             let end: usize = start + view.length();
                             let img_data =
-                                &buffers.get(buf.index()).unwrap().to_owned()[start..end];
+                                &buffers.get(view.buffer().index()).unwrap().to_owned()[start..end];
                             let dynimg = load_from_memory(img_data).expect("Couldn't load image");
-                            $property = Some($texture_enum(dynimg));
+                            TextureOr::Texture(dynimg)
                         }
                     }
-                } else {
-                    $property = Some($factor_enum($factor_source));
+                } else { TextureOr::Value($factor_source) }
                 }
             };
         }
@@ -652,44 +625,15 @@ impl NarrowingMaterial {
             ambient_scaling: None,
             normal: None,
         };
-        texture_or_factor!(
-            ret.diffuse,
-            material.pbr_metallic_roughness().base_color_texture(),
-            material.pbr_metallic_roughness().base_color_factor(),
-            MaybeColorTexture::Texture,
-            MaybeColorTexture::RGBA
-        );
-        texture_or_factor!(
-            ret.emissive,
-            material.emissive_texture(),
-            material.emissive_factor(),
-            MaybeColorTexture::Texture,
-            MaybeColorTexture::RGB
-        );
+        ret.diffuse = Some(texture_or_factor!(material.pbr_metallic_roughness().base_color_texture(), material.pbr_metallic_roughness().base_color_factor()));
+        ret.emissive = Some(texture_or_factor!(material.emissive_texture(), [material.emissive_factor()[0], material.emissive_factor()[1], material.emissive_factor()[2], 1.0]));
         if let Some(spec) = material.specular() {
-            texture_or_factor!(
-                ret.specular,
-                spec.specular_texture(),
-                spec.specular_factor(),
-                MaybeTexture::Texture,
-                MaybeTexture::Value
-            );
+            ret.specular = Some(texture_or_factor!(spec.specular_texture(), spec.specular_factor()));
         }
-        // TODO: Roughness/Metallic texture
-        ret.metallic = Some(MaybeTexture::Value(
-            material.pbr_metallic_roughness().metallic_factor(),
-        ));
-        ret.roughness = Some(MaybeTexture::Value(
-            material.pbr_metallic_roughness().roughness_factor(),
-        ));
-        ret.ambient_scaling = Some(MaybeTexture::Value(1.0)); // todo: maybe change this? provide parameter?
-        texture_or_factor!(
-            ret.normal,
-            material.normal_texture(),
-            1.0,
-            MaybeTexture::Texture,
-            MaybeTexture::Value
-        );
+        ret.metallic = Some(TextureOrScalar::Value(material.pbr_metallic_roughness().metallic_factor()));
+        ret.roughness = Some(TextureOrScalar::Value(material.pbr_metallic_roughness().roughness_factor()));
+        ret.ambient_scaling = Some(TextureOrScalar::Value(1.0)); // todo: maybe change this? provide parameter?
+        ret.normal = Some(texture_or_factor!(material.normal_texture(), 1.0));
         Ok(ret)
     }
     pub(crate) fn with_path(self, base_path: &str) -> Result<Shader, Box<dyn Error>> {
@@ -707,7 +651,7 @@ impl NarrowingMaterial {
         ret.path = Some(base_path.to_string());
         Ok(ret)
     }
-    pub(crate) fn into_shader(
+    pub fn into_shader(
         self,
         mut vert_source: String,
         mut frag_source: String,
@@ -723,9 +667,9 @@ impl NarrowingMaterial {
             program: None,
             cache: HashMap::default(),
         };
-        cvt_vals_to_shader!(self.diffuse, "diffuse", vec![0.5; 3], ret, Vec);
-        cvt_vals_to_shader!(self.specular, "specular", 1.0, ret, Val);
-        cvt_vals_to_shader!(self.emissive, "emissive", vec![0.0; 4], ret, Vec);
+        ret.insert_texture_or_color(&self.diffuse, "diffuse", TextureOr::Value([0.5;4]));
+        ret.insert_texture_or_scalar(&self.specular, "specular", TextureOr::Value(1.0));
+        ret.insert_texture_or_color(&self.emissive, "emissive", TextureOr::Value([0.0;4]));
 
         if !ret.textures.is_empty() {
             let fmt_str = "#define TEXTURES 1\n";

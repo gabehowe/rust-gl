@@ -33,7 +33,7 @@ use gl::{
 };
 use glfw::ffi::{glfwGetTime, glfwSetInputMode, CURSOR, CURSOR_DISABLED};
 use glfw::{
-    fail_on_errors, Action, Context, CursorMode, Glfw, GlfwReceiver, Key, PWindow, SwapInterval,
+    Action, Context, CursorMode, Glfw, GlfwReceiver, Key, PWindow, SwapInterval,
     WindowEvent, WindowHint,
 };
 use image::{ImageBuffer, Rgba};
@@ -48,9 +48,9 @@ pub mod transformation;
 pub mod util;
 
 // Internal module imports
-use crate::shader::ShaderPtr;
+use crate::shader::{ShaderPtr, TextureOr};
 use renderable::{Render, Renderable};
-use shader::{MaybeColorTexture, NarrowingMaterial, ShaderManager};
+use shader::{NarrowingMaterial, ShaderManager};
 use transformation::Camera;
 use util::debug_log;
 
@@ -430,7 +430,7 @@ impl Engine {
         };
         let mut shader_manager = ShaderManager::new();
         let mat = NarrowingMaterial {
-            diffuse: Some(MaybeColorTexture::RGBA([0.0, 1.0, 0.0, 1.0])),
+            diffuse: Some(TextureOr::Value([0.0, 1.0, 0.0, 1.0])),
             emissive: None,
             specular: None,
             metallic: None,
