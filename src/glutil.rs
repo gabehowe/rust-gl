@@ -178,7 +178,7 @@ impl BufferObject {
 }
 impl GLObject for BufferObject {
     /// Must be run with a currently bound Vertex Array Object
-    fn generate(&mut self) -> Result<(), Box<(dyn Error)>> {
+    fn generate(&mut self) -> Result<(), Box<dyn Error>> {
         unsafe {
             gl::CreateBuffers(1, &mut self.id);
         }

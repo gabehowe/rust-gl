@@ -82,7 +82,7 @@ impl ShaderManager {
         unsafe {
             gl::GenBuffers(1, &mut ret.world_buffer);
             gl::BindBuffer(UNIFORM_BUFFER, ret.world_buffer);
-            gl::BufferData(UNIFORM_BUFFER, 16, null(), STATIC_DRAW); // 1 * vec4
+            gl::BufferData(UNIFORM_BUFFER, 16, null(), gl::DYNAMIC_DRAW); // 1 * vec4
             gl::BindBuffer(UNIFORM_BUFFER, 0); // release the buffer
 
             gl::BindBufferRange(

@@ -3,38 +3,39 @@ use std::mem::size_of;
 use std::ptr::null;
 
 use crate::util::{find_gl_error, GLFunctionError};
+use cgmath::num_traits::AsPrimitive;
 use cgmath::{perspective, Array, Deg, EuclideanSpace, Euler, Matrix, Matrix4, Point3, Rad, Vector2, Vector3, Zero};
 use gl::types::{GLsizeiptr, GLuint};
-use gl::{STATIC_DRAW, UNIFORM_BUFFER};
+use gl::{DYNAMIC_DRAW, UNIFORM_BUFFER};
 use imgui::sys::cty::c_double;
 
 #[macro_export]
 macro_rules! derive_transformable {
     ($obj:ty) => {
-        impl Transformable for $obj {
-            fn scale(&mut self, x: f32, y: f32, z: f32) {
-                self.transform.scale(x, y, z);
+        impl<T: cgmath::num_traits::AsPrimitive<f32> + Copy> Transformable<T> for $obj {
+            fn scale(&mut self, x: T, y: T, z: T) {
+                self.transform.scale(x.as_(), y.as_(), z.as_());
             }
-            fn uniform_scale(&mut self, scale: f32) {
-                self.transform.uniform_scale(scale);
+            fn uniform_scale(&mut self, scale: T) {
+                self.transform.uniform_scale(scale.as_());
             }
-            fn rotate(&mut self, x: f32, y: f32, z: f32) {
-                self.transform.rotate(x, y, z);
+            fn rotate(&mut self, x: T, y: T, z: T) {
+                self.transform.rotate(x.as_(), y.as_(), z.as_());
             }
-            fn translate(&mut self, x: f32, y: f32, z: f32) {
-                self.transform.translate(x, y, z);
+            fn translate(&mut self, x: T, y: T, z: T) {
+                self.transform.translate(x.as_(), y.as_(), z.as_());
             }
-            fn set_scale(&mut self, x: f32, y: f32, z: f32) {
-                self.transform.set_scale(x, y, z);
+            fn set_scale(&mut self, x: T, y: T, z: T) {
+                self.transform.set_scale(x.as_(), y.as_(), z.as_());
             }
-            fn set_rotation(&mut self, x: f32, y: f32, z: f32) {
-                self.transform.set_rotation(x, y, z);
+            fn set_rotation(&mut self, x: T, y: T, z: T) {
+                self.transform.set_rotation(x.as_(), y.as_(), z.as_());
             }
-            fn set_translation(&mut self, x: f32, y: f32, z: f32) {
-                self.transform.set_translation(x, y, z);
+            fn set_translation(&mut self, x: T, y: T, z: T) {
+                self.transform.set_translation(x.as_(), y.as_(), z.as_());
             }
-            fn set_uniform_scale(&mut self, scale: f32) {
-                self.transform.set_uniform_scale(scale);
+            fn set_uniform_scale(&mut self, scale: T) {
+                self.transform.set_uniform_scale(scale.as_());
             }
 
         }
@@ -139,15 +140,15 @@ impl Transformable for Transform {
     fn translate(&mut self, x: f32, y: f32, z: f32) -> Matrix4<f32>;
 }
 */
-pub trait Transformable {
-    fn scale(&mut self, x: f32, y: f32, z: f32);
-    fn uniform_scale(&mut self, scale: f32);
-    fn rotate(&mut self, x: f32, y: f32, z: f32);
-    fn translate(&mut self, x: f32, y: f32, z: f32);
-    fn set_scale(&mut self, x: f32, y: f32, z: f32);
-    fn set_uniform_scale(&mut self, scale: f32);
-    fn set_rotation(&mut self, x: f32, y: f32, z: f32);
-    fn set_translation(&mut self, x: f32, y: f32, z: f32);
+pub trait Transformable<T: AsPrimitive<f32> + Copy = f32> {
+    fn scale(&mut self, x: T, y: T, z: T);
+    fn uniform_scale(&mut self, scale: T);
+    fn rotate(&mut self, x: T, y: T, z: T);
+    fn translate(&mut self, x: T, y: T, z: T);
+    fn set_scale(&mut self, x: T, y: T, z: T);
+    fn set_uniform_scale(&mut self, scale: T);
+    fn set_rotation(&mut self, x: T, y: T, z: T);
+    fn set_translation(&mut self, x: T, y: T, z: T);
 }
 
 /*impl Transformation for Matrix4<f32> {
@@ -204,7 +205,7 @@ impl Camera {
     pub unsafe fn initialize_buffers(&mut self) {
         gl::GenBuffers(1, &mut self.uniform_buffer);
         gl::BindBuffer(UNIFORM_BUFFER, self.uniform_buffer);
-        gl::BufferData(UNIFORM_BUFFER, 16 + 64 * 2, null(), STATIC_DRAW); // 2 * mat4
+        gl::BufferData(UNIFORM_BUFFER, 16 + 64 * 2, null(), DYNAMIC_DRAW); // 2 * mat4
         gl::BindBuffer(UNIFORM_BUFFER, 0); // release the buffer
 
         gl::BindBufferRange(

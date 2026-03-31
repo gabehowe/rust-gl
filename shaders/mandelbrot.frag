@@ -128,12 +128,14 @@ float calcBlue(float temp) {
 }
 
 void main() {
-    vec2 fc = (fs_in.FragPos.xz) + vec2(-0.5, -0.5);
-//    float xs = (-3.25 - 0.83) * -fc.x + (-3.25 + 0.83) / 4;
-//    float ys = (-1.12 - 1.12) * fc.y;
-    float fac = 1;
-    float xs = (((fs_in.bounds[0] - fs_in.bounds[1]) * -fc.x + (fs_in.bounds[0] + fs_in.bounds[1]) / 4) * fac);
-    float ys = ( fac*((fs_in.bounds[2] - fs_in.bounds[3]) * fc.y + (fs_in.bounds[2] + fs_in.bounds[3]) / 2) );
+	// FragColor = vec4(1.,1,1,1);
+
+    vec2 fc = (fs_in.FragPos.xy) + vec2(-0.5, -0.5);
+   // float xs = (-3.25 - 0.83) * -fc.x + (-3.25 + 0.83) / 4;
+   // float ys = (-1.12 - 1.12) * fc.y;
+   float fac = 1.0;
+    float xs = (((fs_in.bounds[0] - fs_in.bounds[1]) * -fc.x + (fs_in.bounds[0] + fs_in.bounds[1])) * fac);
+    float ys = ( fac*((fs_in.bounds[2] - fs_in.bounds[3]) * fc.y + (fs_in.bounds[2] + fs_in.bounds[3])) );
     int iteration = 0;
     float nx = 0;
     float ny = 0;
@@ -155,7 +157,8 @@ void main() {
     }
 
     if (is_too_high) {
-        FragColor= vec4(1,0,0,0);
+		float tmp = 3000.0;
+        FragColor= vec4(calcRed(tmp), calcGreen(tmp), calcBlue(tmp), 1.0);
     }
     else {
 
@@ -164,4 +167,5 @@ void main() {
         color.z = float(iteration)/90.0;
         FragColor = vec4(hsv2rgb(color),1.0);
     }
+	// FragColor = vec4(fs_in.FragPos.x, fs_in.FragPos.y,0,1);
 }

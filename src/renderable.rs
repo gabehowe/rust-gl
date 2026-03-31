@@ -3,6 +3,7 @@ use crate::glutil::{BufferObject, GLBuffer, GLObject, Vaa, VertexArrayObject};
 use crate::shader::{FromVertex, NarrowingMaterial, SetValue, Shader, ShaderManager, ShaderPtr};
 use crate::transformation::{Transform, Transformable};
 use crate::util::find_gl_error;
+use cgmath::num_traits::AsPrimitive;
 use cgmath::{Vector2, Vector3};
 use gl::types::{GLenum, GLuint};
 use gl::{ARRAY_BUFFER, FLOAT, STATIC_DRAW, TRIANGLES, TRIANGLE_FAN, UNSIGNED_INT};
@@ -28,49 +29,49 @@ pub trait Render: Transformable {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-impl Transformable for InstancedObject {
-    fn scale(&mut self, x: f32, y: f32, z: f32) {
-        self.transforms.iter_mut().for_each(|v| v.scale(x, y, z));
+impl<T: AsPrimitive<f32> + Copy> Transformable<T> for InstancedObject {
+    fn scale(&mut self, x: T, y: T, z: T){
+        self.transforms.iter_mut().for_each(|v| v.scale(x.as_(), y.as_(), z.as_()));
     }
 
-    fn uniform_scale(&mut self, scale: f32) {
+    fn uniform_scale(&mut self, scale: T) {
         self.transforms
             .iter_mut()
-            .for_each(|v| v.uniform_scale(scale));
+            .for_each(|v| v.uniform_scale(scale.as_()));
     }
 
-    fn rotate(&mut self, x: f32, y: f32, z: f32) {
-        self.transforms.iter_mut().for_each(|v| v.rotate(x, y, z));
+    fn rotate(&mut self, x: T, y: T, z: T) {
+        self.transforms.iter_mut().for_each(|v| v.rotate(x.as_(), y.as_(), z.as_()));
     }
 
-    fn translate(&mut self, x: f32, y: f32, z: f32) {
+    fn translate(&mut self, x: T, y: T, z: T) {
         self.transforms
             .iter_mut()
-            .for_each(|v| v.translate(x, y, z));
+            .for_each(|v| v.translate(x.as_(), y.as_(), z.as_()));
     }
 
-    fn set_scale(&mut self, x: f32, y: f32, z: f32) {
+    fn set_scale(&mut self, x: T, y: T, z: T) {
         self.transforms
             .iter_mut()
-            .for_each(|v| v.set_scale(x, y, z));
+            .for_each(|v| v.set_scale(x.as_(), y.as_(), z.as_()));
     }
 
-    fn set_uniform_scale(&mut self, scale: f32) {
+    fn set_uniform_scale(&mut self, scale: T) {
         self.transforms
             .iter_mut()
-            .for_each(|v| v.set_uniform_scale(scale));
+            .for_each(|v| v.set_uniform_scale(scale.as_()));
     }
 
-    fn set_rotation(&mut self, x: f32, y: f32, z: f32) {
+    fn set_rotation(&mut self, x: T, y: T, z: T) {
         self.transforms
             .iter_mut()
-            .for_each(|v| v.set_rotation(x, y, z));
+            .for_each(|v| v.set_rotation(x.as_(), y.as_(), z.as_()));
     }
 
-    fn set_translation(&mut self, x: f32, y: f32, z: f32) {
+    fn set_translation(&mut self, x: T, y: T, z: T) {
         self.transforms
             .iter_mut()
-            .for_each(|v| v.set_translation(x, y, z));
+            .for_each(|v| v.set_translation(x.as_(), y.as_(), z.as_()));
     }
 }
 
@@ -534,47 +535,47 @@ impl Render for RenderableGroup {
         self
     }
 }
-impl Transformable for RenderableGroup {
-    fn scale(&mut self, x: f32, y: f32, z: f32) {
+impl<T: AsPrimitive<f32> + Copy> Transformable<T> for RenderableGroup {
+    fn scale(&mut self, x: T, y: T, z: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].scale(x, y, z);
         }
     }
-    fn uniform_scale(&mut self, scale: f32) {
+    fn uniform_scale(&mut self, scale: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].uniform_scale(scale);
         }
     }
-    fn rotate(&mut self, x: f32, y: f32, z: f32) {
+    fn rotate(&mut self, x: T, y: T, z: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].rotate(x, y, z);
         }
     }
-    fn translate(&mut self, x: f32, y: f32, z: f32) {
+    fn translate(&mut self, x: T, y: T, z: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].translate(x, y, z);
         }
     }
 
-    fn set_scale(&mut self, x: f32, y: f32, z: f32) {
+    fn set_scale(&mut self, x: T, y: T, z: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].set_scale(x, y, z);
         }
     }
 
-    fn set_uniform_scale(&mut self, scale: f32) {
+    fn set_uniform_scale(&mut self, scale: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].set_uniform_scale(scale);
         }
     }
 
-    fn set_rotation(&mut self, x: f32, y: f32, z: f32) {
+    fn set_rotation(&mut self, x: T, y: T, z: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].set_rotation(x, y, z);
         }
     }
 
-    fn set_translation(&mut self, x: f32, y: f32, z: f32) {
+    fn set_translation(&mut self, x: T, y: T, z: T) {
         for i in 0..self.renderables.len() {
             self.renderables[i].set_translation(x, y, z);
         }
