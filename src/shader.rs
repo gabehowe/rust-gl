@@ -41,7 +41,7 @@ fn new_shader_ptr(shader: Shader) -> ShaderPtr {
 }
 
 #[derive(Debug)]
-enum CacheType {
+pub(crate) enum CacheType {
     Matrix4(Matrix4<f32>),
     Matrix3(Matrix3<f32>),
     Matrix2(Matrix2<f32>),
@@ -480,36 +480,7 @@ impl Shader {
     fn load_cached_uniforms(&self) -> Result<(), String> {
         println!("{:?}", self.cache);
         for (k, v) in &self.cache {
-            // TODO: Figure out this mess
-            match v {
-                CacheType::Matrix4(m) => {
-                    self.direct_set(*m, k)?;
-                }
-                CacheType::Matrix3(m) => {
-                    self.direct_set(*m, k)?;
-                }
-                CacheType::Matrix2(m) => {
-                    self.direct_set(*m, k)?;
-                }
-                CacheType::Float(f) => {
-                    self.direct_set(*f, k)?;
-                }
-                CacheType::Int(i) => {
-                    self.direct_set(*i, k)?;
-                }
-                CacheType::UInt(u) => {
-                    self.direct_set(*u, k)?;
-                }
-                CacheType::VecInt(v) => {
-                    self.direct_set(v.clone(), k)?;
-                }
-                CacheType::VecUInt(v) => {
-                    self.direct_set(v.clone(), k)?;
-                }
-                CacheType::VecFloat(v) => {
-                    self.direct_set(v.clone(), k)?;
-                }
-            }
+            self.direct_set(v, k)?;
         }
         Ok(())
     }
@@ -747,6 +718,25 @@ pub trait SetValue<T> {
     /// Sets a value based on the type of the value.
     fn set(&mut self, value: T, name: &str) -> Result<(), String>;
     fn direct_set(&self, value: T, name: &str) -> Result<(), String>;
+}
+impl SetValue<&CacheType> for Shader {
+    fn set(&mut self, value: &CacheType, name: &str) -> Result<(), String> {
+        self.direct_set(value, name)
+    }
+
+    fn direct_set(&self, value: &CacheType, name: &str) -> Result<(), String> {
+        match value {
+            CacheType::Matrix4(v)  => self.direct_set(*v, name),
+            CacheType::Matrix3(v)  => self.direct_set(*v, name),
+            CacheType::Matrix2(v)  => self.direct_set(*v, name),
+            CacheType::Float(v)    => self.direct_set(*v, name),
+            CacheType::Int(v)      => self.direct_set(*v, name),
+            CacheType::UInt(v)     => self.direct_set(*v, name),
+            CacheType::VecInt(v)   => self.direct_set(v.clone(), name),
+            CacheType::VecUInt(v)  => self.direct_set(v.clone(), name),
+            CacheType::VecFloat(v) => self.direct_set(v.clone(), name),
+        }
+    }
 }
 
 set_matrix_value!(

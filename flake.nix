@@ -25,6 +25,8 @@
         ];
 
         commonBuildInputs = with pkgs; [
+          git
+          git-lfs
           cmake
           libx11
           libxrandr
