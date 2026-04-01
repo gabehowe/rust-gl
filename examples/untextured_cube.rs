@@ -38,7 +38,7 @@ fn main() {
         Some(px_grid.2),
         &engine.data.shader_manager.load_from_path("shaders/orientation_shader").expect("Failed to load shader."),
     );
-    debug_axes.shader.borrow_mut().set(vec![ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set color for debug axes.");
+    debug_axes.shader.borrow_mut().set([ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set color for debug axes.");
     debug_axes.draw_type = gl::LINES;
     debug_axes.translate(0.0, 0.0, 0.0);
     engine.data.add_renderable(Box::from(debug_axes)).expect("Couldn't add renderable.");

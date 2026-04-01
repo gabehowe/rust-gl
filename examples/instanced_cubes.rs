@@ -86,7 +86,7 @@ fn main() {
     debug_axes
         .shader
         .borrow_mut()
-        .set(vec![1.0f32, 0.0f32, 0.0f32], "ourColor")
+        .set([1.0f32, 0.0f32, 0.0f32], "ourColor")
         .expect("Couldn't set color for debug axes.");
     debug_axes.draw_type = gl::LINES;
     debug_axes.translate(0.0, 0.0, 0.0);

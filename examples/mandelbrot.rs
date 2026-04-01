@@ -34,7 +34,7 @@ fn main() {
         Some(px_grid.2),
         &engine.data.shader_manager.load_from_path("shaders/orientation_shader").expect("Failed to load shader."),
     );
-    debug_axes.shader.borrow_mut().set(vec![ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set color for debug axes.");
+    debug_axes.shader.borrow_mut().set([ 1.0f32, 0.0f32, 0.0f32 ], "ourColor").expect("Couldn't set color for debug axes.");
     debug_axes.draw_type = gl::LINES;
     engine.data.add_renderable(Box::from(debug_axes)).expect("Couldn't add renderable.");
 
@@ -56,7 +56,7 @@ fn main() {
             staggered_frametime = engine.frametime;
         }
         engine.update(|imgui: &mut Ui, frametime: f64, data: &mut Data| {
-            mandel_shader.borrow_mut().set(mandelbrot_value.to_vec(), "bounds").expect("Couldn't set!");
+            mandel_shader.borrow_mut().set(mandelbrot_value, "bounds").expect("Couldn't set!");
             imgui
                 .window("info")
                 .size([300.0, 200.0], Condition::Always)

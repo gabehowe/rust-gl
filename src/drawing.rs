@@ -5,7 +5,7 @@ Render the vector objects
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features, unused)]
 
-use crate::renderable::{InstancedObject, MeshData, Render};
+use crate::renderable::{InstancedObject, Mesh, Render};
 use crate::shader::{
     Shader, ShaderPtr,
 };
@@ -64,7 +64,7 @@ impl Draw {
             )
                 .unwrap(),
         );
-        let mut rectangle = MeshData::new(
+        let mut rectangle = Mesh::new(
             VERTS.to_vec(),
             vec![0, 1, 3, 2],
             None,
@@ -76,7 +76,7 @@ impl Draw {
             let mut vect = vec3(angle.cos(), angle.sin(), 0.0);
             points.push(vect);
         }
-        let mut circle = MeshData::new(
+        let mut circle = Mesh::new(
             points,
             (0..CIRCLE_RESOLUTION as u32).map(|i| i * 3).collect(),
             None,

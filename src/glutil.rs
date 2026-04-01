@@ -6,6 +6,15 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::ops::AddAssign;
 
+#[derive(Debug)]
+pub(crate) enum GLType {
+    Matrix4, Matrix3, Matrix2,
+    Float, Int, UInt,
+    VecInt(usize),
+    VecUInt(usize),
+    VecFloat(usize),
+}
+
 pub trait GLObject {
     /// # Errors
     /// If the OpenGL function fails, it will return a `GLFunctionError`.

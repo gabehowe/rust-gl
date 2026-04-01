@@ -114,7 +114,7 @@ impl Render for InstancedObject {
     }
 }
 pub struct InstancedObject {
-    mesh: MeshData,
+    mesh: Mesh,
     transforms: Vec<Transform>,
     colors: Vec<[f32; 4]>,
     shader: ShaderPtr,
@@ -133,7 +133,7 @@ impl InstancedObject {
         colors: Vec<[f32; 4]>,
     ) -> Self {
         let mut ret = Self {
-            mesh: MeshData::new(vertices, indices, normals, None),
+            mesh: Mesh::new(vertices, indices, normals, None),
             shader: shader.clone(),
             transforms,
             colors,
@@ -212,14 +212,14 @@ impl InstancedObject {
         self.draw_type = draw_type;
     }
 }
-pub struct MeshData {
+pub struct Mesh {
     pub vertices: Vec<Vector3<f32>>,
     pub indices: Vec<u32>,
     pub vertex_array: VertexArrayObject,
     pub tex_coords: Option<Vec<Vector2<f32>>>, // TODO: use general vertex attribs or some type of builder instead of explicitly supporting only these two.
     pub normals: Option<Vec<Vector3<f32>>>,
 }
-impl MeshData {
+impl Mesh {
     #[must_use] pub fn new(
         vertices: Vec<Vector3<f32>>,
         indices: Vec<u32>,
@@ -277,7 +277,7 @@ impl MeshData {
 }
 
 pub struct Renderable {
-    pub mesh_data: MeshData,
+    pub mesh_data: Mesh,
     pub transform: Transform,
     pub shader: ShaderPtr,
     pub draw_type: GLenum,
@@ -322,7 +322,7 @@ impl Renderable {
         shader: &ShaderPtr,
     ) -> Self {
         Self {
-            mesh_data: MeshData::new(vertices, indices, normals, None),
+            mesh_data: Mesh::new(vertices, indices, normals, None),
             shader: shader.clone(),
             transform: Transform::default(),
             draw_type: TRIANGLES,

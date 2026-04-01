@@ -1,5 +1,9 @@
+use cgmath::num_traits::AsPrimitive;
+use paste::paste;
+use crate::glutil::GLType;
 use crate::util::{find_gl_error, load_file, GLFunctionError};
 use alloc::rc::Rc;
+use bytemuck::{bytes_of, cast_slice, from_bytes, try_cast_slice};
 use cgmath::{Array, Matrix, Matrix2, Matrix3, Matrix4, Vector3, Vector4};
 use core::slice::Iter;
 use gl::types::{GLenum, GLint, GLsizei, GLuint};
@@ -40,18 +44,6 @@ fn new_shader_ptr(shader: Shader) -> ShaderPtr {
     Rc::new(RefCell::new(shader))
 }
 
-#[derive(Debug)]
-pub(crate) enum CacheType {
-    Matrix4(Matrix4<f32>),
-    Matrix3(Matrix3<f32>),
-    Matrix2(Matrix2<f32>),
-    Float(f32),
-    Int(i32),
-    UInt(u32),
-    VecInt(Vec<i32>),
-    VecUInt(Vec<u32>),
-    VecFloat(Vec<f32>),
-}
 #[allow(clippy::ref_option)]
 fn from_color(color: &Option<MtlColor>) -> Vec<f32> {
     if let &Some(MtlColor::Rgb(r, g, b)) = color {
@@ -135,6 +127,12 @@ impl ShaderManager {
         self.shaders.len()
     }
 }
+#[derive(Debug)]
+struct CacheEntry {
+    data: Vec<u8>,
+    kind: GLType
+}
+
 // A struct to build shaders depending on the options provided in the material.
 #[derive(Default)]
 pub struct Shader {
@@ -146,7 +144,7 @@ pub struct Shader {
     values: HashMap<String, f32>,
     debug_sources: Vec<CString>,
     program: Option<u32>,
-    cache: HashMap<String, CacheType>,
+    cache: HashMap<String, CacheEntry>,
 }
 
 impl Shader {
@@ -664,7 +662,7 @@ impl NarrowingMaterial {
         ret.use_();
         for (i, v) in ret.vector_values.clone() {
             let ov = v.clone();
-            let vector = vec![ov[0], ov[1], ov[2], 1.0];
+            let vector = [ov[0], ov[1], ov[2], 1.0];
             let os = i.clone();
             ret.set(vector, os.as_str())?;
         }
@@ -679,20 +677,20 @@ impl NarrowingMaterial {
 }
 
 macro_rules! set_matrix_value {
-    ($tt:ty, $gl_call:expr, $cache_type:path) => {
+    ($tt:ty, $gl_call:expr, $cache_type:expr, $bm_call:expr) => {
         impl SetValue<$tt> for Shader {
             /**
              * Sets a value in the shader and caches it.
              */
             fn set(&mut self, value: $tt, name: &str) -> Result<(), String> {
-                if let Some($cache_type(cached)) = self.cache.get(name) {
-                    if *cached == value {
+                if let Some(cached) = self.cache.get(name) {
+                    if cached.data == $bm_call(&value) {
                         return Ok(());
                     }
                 }
                 // Insert into the cache if it successfully sets the value.
-                self.direct_set(value.clone(), name).map(|()| {
-                    self.cache.insert(name.to_owned(), $cache_type(value));
+                self.direct_set(value.clone(), name).map(|_| {
+                    self.cache.insert(name.to_owned(), CacheEntry {kind: $cache_type, data: $bm_call(&value).to_vec()});
                 })
             }
             /**
@@ -704,7 +702,7 @@ macro_rules! set_matrix_value {
                 }
                 let loc = self.get_uniform_location(name)?;
                 // Safety: trust it's safe
-                unsafe { $gl_call(loc, value.clone())? };
+                unsafe { $gl_call(loc, value)? };
                 match find_gl_error() {
                     Ok(_) => Ok(()),
                     Err(e) => Err(e.to_string() + " " + name),
@@ -719,24 +717,40 @@ pub trait SetValue<T> {
     fn set(&mut self, value: T, name: &str) -> Result<(), String>;
     fn direct_set(&self, value: T, name: &str) -> Result<(), String>;
 }
-impl SetValue<&CacheType> for Shader {
-    fn set(&mut self, value: &CacheType, name: &str) -> Result<(), String> {
+impl SetValue<&CacheEntry> for Shader {
+    fn set(&mut self, value: &CacheEntry, name: &str) -> Result<(), String> {
         self.direct_set(value, name)
     }
 
-    fn direct_set(&self, value: &CacheType, name: &str) -> Result<(), String> {
-        match value {
-            CacheType::Matrix4(v)  => self.direct_set(*v, name),
-            CacheType::Matrix3(v)  => self.direct_set(*v, name),
-            CacheType::Matrix2(v)  => self.direct_set(*v, name),
-            CacheType::Float(v)    => self.direct_set(*v, name),
-            CacheType::Int(v)      => self.direct_set(*v, name),
-            CacheType::UInt(v)     => self.direct_set(*v, name),
-            CacheType::VecInt(v)   => self.direct_set(v.clone(), name),
-            CacheType::VecUInt(v)  => self.direct_set(v.clone(), name),
-            CacheType::VecFloat(v) => self.direct_set(v.clone(), name),
+    fn direct_set(&self, value: &CacheEntry, name: &str) -> Result<(), String> {
+        match value.kind {
+            GLType::Matrix4      => self.direct_set(*<&Matrix4::<f32>>::from(from_bytes::<[f32;16]>(value.data.as_slice())), name),
+            GLType::Matrix3      => self.direct_set(*<&Matrix3::<f32>>::from(from_bytes::<[f32;9]>(value.data.as_slice())), name),
+            GLType::Matrix2      => self.direct_set(*<&Matrix2::<f32>>::from(from_bytes::<[f32;4]>(value.data.as_slice())), name),
+            GLType::Float        => self.direct_set(*from_bytes::<f32>(value.data.as_slice()), name),
+            GLType::Int          => self.direct_set(*from_bytes::<i32>(value.data.as_slice()), name),
+            GLType::UInt         => self.direct_set(*from_bytes::<u32>(value.data.as_slice()), name),
+            GLType::VecInt(1)    => self.direct_set(bytemuck::pod_read_unaligned::<[i32; 1]>(value.data.as_slice()), name),
+            GLType::VecInt(2)    => self.direct_set(bytemuck::pod_read_unaligned::<[i32; 2]>(value.data.as_slice()), name),
+            GLType::VecInt(3)    => self.direct_set(bytemuck::pod_read_unaligned::<[i32; 3]>(value.data.as_slice()), name),
+            GLType::VecInt(4)    => self.direct_set(bytemuck::pod_read_unaligned::<[i32; 4]>(value.data.as_slice()), name),
+            GLType::VecUInt(1)   => self.direct_set(bytemuck::pod_read_unaligned::<[u32; 1]>(value.data.as_slice()), name),
+            GLType::VecUInt(2)   => self.direct_set(bytemuck::pod_read_unaligned::<[u32; 2]>(value.data.as_slice()), name),
+            GLType::VecUInt(3)   => self.direct_set(bytemuck::pod_read_unaligned::<[u32; 3]>(value.data.as_slice()), name),
+            GLType::VecUInt(4)   => self.direct_set(bytemuck::pod_read_unaligned::<[u32; 4]>(value.data.as_slice()), name),
+            GLType::VecFloat(1)  => self.direct_set(bytemuck::pod_read_unaligned::<[f32; 1]>(value.data.as_slice()), name),
+            GLType::VecFloat(2)  => self.direct_set(bytemuck::pod_read_unaligned::<[f32; 2]>(value.data.as_slice()), name),
+            GLType::VecFloat(3)  => self.direct_set(bytemuck::pod_read_unaligned::<[f32; 3]>(value.data.as_slice()), name),
+            GLType::VecFloat(4)  => self.direct_set(bytemuck::pod_read_unaligned::<[f32; 4]>(value.data.as_slice()), name),
+            GLType::VecFloat(_) | GLType::VecUInt(_)| GLType::VecInt(_)  => panic!("Primitive vectors can't contain more than 4 elements!"),
         }
     }
+}
+fn matrix_to_bytes<T, const S:usize>(mat: T)-> Vec<u8> where T: AsRef<[f32; S]> {
+    cast_slice(mat.as_ref()).to_vec()
+}
+fn vec_to_bytes<T>(mat: &[T])-> Vec<u8> where T: AsPrimitive<u8> + bytemuck::Pod {
+    cast_slice(mat.as_ref()).to_vec()
 }
 
 set_matrix_value!(
@@ -745,7 +759,7 @@ set_matrix_value!(
         gl::UniformMatrix4fv(loc, 1, FALSE, value.as_ptr());
         Ok(())
     },
-    CacheType::Matrix4
+    GLType::Matrix4, matrix_to_bytes
 );
 set_matrix_value!(
     Matrix3<f32>,
@@ -753,7 +767,7 @@ set_matrix_value!(
         gl::UniformMatrix3fv(loc, 1, false.into(), value.as_mut_ptr());
         Ok(())
     },
-    CacheType::Matrix3
+    GLType::Matrix3, matrix_to_bytes
 );
 set_matrix_value!(
     Matrix2<f32>,
@@ -761,7 +775,7 @@ set_matrix_value!(
         gl::UniformMatrix2fv(loc, 1, false.into(), value.as_mut_ptr());
         Ok(())
     },
-    CacheType::Matrix2
+    GLType::Matrix2, matrix_to_bytes
 );
 set_matrix_value!(
     f32,
@@ -769,7 +783,7 @@ set_matrix_value!(
         gl::Uniform1f(loc, value);
         Ok(())
     },
-    CacheType::Float
+    GLType::Float, bytes_of
 );
 set_matrix_value!(
     u32,
@@ -777,7 +791,7 @@ set_matrix_value!(
         gl::Uniform1ui(loc, value);
         Ok(())
     },
-    CacheType::UInt
+    GLType::UInt, bytes_of
 );
 set_matrix_value!(
     i32,
@@ -785,49 +799,32 @@ set_matrix_value!(
         gl::Uniform1i(loc, value);
         Ok(())
     },
-    CacheType::Int
-);
-set_matrix_value!(
-    Vec<i32>,
-    |loc: i32, mut value: Vec<i32>| -> Result<(), String> {
-        match value.len() {
-            1 => gl::Uniform1iv(loc, 1, value.as_mut_ptr()),
-            2 => gl::Uniform2iv(loc, 1, value.as_mut_ptr()),
-            3 => gl::Uniform3iv(loc, 1, value.as_mut_ptr()),
-            4 => gl::Uniform4iv(loc, 1, value.as_mut_ptr()),
-            _ => return Err("Incorrectly sized vector ".to_owned()),
-        }
-        Ok(())
-    },
-    CacheType::VecInt
+    GLType::Int, bytes_of
 );
 
-set_matrix_value!(
-    Vec<u32>,
-    |loc: i32, mut value: Vec<u32>| -> Result<(), String> {
-        match value.len() {
-            1 => gl::Uniform1uiv(loc, 1, value.as_mut_ptr()),
-            2 => gl::Uniform2uiv(loc, 1, value.as_mut_ptr()),
-            3 => gl::Uniform3uiv(loc, 1, value.as_mut_ptr()),
-            4 => gl::Uniform4uiv(loc, 1, value.as_mut_ptr()),
-            _ => return Err("Incorrectly sized vector ".to_owned()),
-        }
-        Ok(())
-    },
-    CacheType::VecUInt
-);
+macro_rules! vector_matrix_value {
+    ($i:literal, $kind:ty, $cache:path, $ev:ident) => {
+    set_matrix_value!(
+        [$kind; $i],
+        |loc: i32, value: [$kind; $i]| -> Result<(), String> {
+            paste!{gl::[<Uniform $i $ev >](loc, 1 ,value.as_ptr())};
+            Ok(())
+        },
+        ($cache)($i), vec_to_bytes
+    );
+    };
+}
+vector_matrix_value!(1, u32, GLType::VecUInt, uiv);
+vector_matrix_value!(2, u32, GLType::VecUInt, uiv);
+vector_matrix_value!(3, u32, GLType::VecUInt, uiv);
+vector_matrix_value!(4, u32, GLType::VecUInt, uiv);
 
-set_matrix_value!(
-    Vec<f32>,
-    |loc: i32, mut value: Vec<f32>| -> Result<(), String> {
-        match value.len() {
-            1 => gl::Uniform1fv(loc, 1, value.as_mut_ptr()),
-            2 => gl::Uniform2fv(loc, 1, value.as_mut_ptr()),
-            3 => gl::Uniform3fv(loc, 1, value.as_mut_ptr()),
-            4 => gl::Uniform4fv(loc, 1, value.as_mut_ptr()),
-            _ => return Err("Incorrectly sized vector ".to_owned()),
-        }
-        Ok(())
-    },
-    CacheType::VecFloat
-);
+vector_matrix_value!(1, i32, GLType::VecInt, iv);
+vector_matrix_value!(2, i32, GLType::VecInt, iv);
+vector_matrix_value!(3, i32, GLType::VecInt, iv);
+vector_matrix_value!(4, i32, GLType::VecInt, iv);
+
+vector_matrix_value!(1, f32, GLType::VecFloat, fv);
+vector_matrix_value!(2, f32, GLType::VecFloat, fv);
+vector_matrix_value!(3, f32, GLType::VecFloat, fv);
+vector_matrix_value!(4, f32, GLType::VecFloat, fv);
